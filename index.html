@@ -455,6 +455,9 @@ const TICKET_TITLES = {
   p1: ['Full Disk', 'Service Down', 'Data Loss', 'Security Breach', 'Network Outage', 'DB Corruption', 'DDoS Attack']
 };
 
+const OFFLINE_PENALTY = 0.5;
+const MAX_OFFLINE_SECONDS = 86400;
+
 const ACHIEVEMENTS = [
   { id: 'first_click', name: 'Erster Klick', desc: 'Klicke zum ersten Mal', check: g => g.totalClicks >= 1, reward: { type: 'clickBonus', value: 0.01 }, rewardDesc: '+1% Click Power' },
   { id: 'hundred', name: 'Centurion', desc: '100 Cycles gesammelt', check: g => g.totalEarned >= 100, reward: { type: 'cpsBonus', value: 0.02 }, rewardDesc: '+2% CPS' },
@@ -519,6 +522,7 @@ class Game {
     this.pagerDutyDate = null;
     this.legacyCodeTriggered = false;
     this.sessionStart = Date.now();
+    this.lastOnline = 0;
     this.currentTab = 'hardware';
     this.tabs = ['hardware', 'cloud', 'ai', 'click', 'itsm', 'achievements'];
     this.tabNames = { hardware: 'Hardware', cloud: 'Cloud', ai: 'AI/Quantum', click: 'Click', itsm: 'ITSM', achievements: '🏆 Erfolge' };
@@ -527,6 +531,8 @@ class Game {
 
   init() {
     this.load();
+    this.setupOfflineTracking();
+    this.handleOfflineEarnings();
     this.checkPagerDuty();
     this.setupUI();
     this.loop();
@@ -540,6 +546,91 @@ class Game {
     this.renderTabs();
     this.renderUpgrades();
     this.renderTickets();
+  }
+
+  setupOfflineTracking() {
+    const saveLastOnline = () => {
+      this.lastOnline = Date.now();
+      if (typeof localStorage !== 'undefined') {
+        const raw = localStorage.getItem('devopsClicker');
+        if (raw) {
+          try {
+            const data = JSON.parse(raw);
+            data.lastOnline = this.lastOnline;
+            localStorage.setItem('devopsClicker', JSON.stringify(data));
+          } catch (e) { /* ignore */ }
+        }
+      }
+    };
+    window.addEventListener('beforeunload', saveLastOnline);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') saveLastOnline();
+    });
+  }
+
+  handleOfflineEarnings() {
+    if (!this.lastOnline || this.lastOnline <= 0) return;
+    const now = Date.now();
+    let offlineSeconds = (now - this.lastOnline) / 1000;
+    if (offlineSeconds < 5) return; // ignore brief tab switches / refreshes
+    offlineSeconds = Math.min(offlineSeconds, MAX_OFFLINE_SECONDS);
+    const cps = this.calculateCps();
+    if (cps <= 0) {
+      this.showRejoinToast(0, offlineSeconds, true);
+      return;
+    }
+    const earned = offlineSeconds * cps * OFFLINE_PENALTY;
+    this.cycles += earned;
+    this.totalEarned += earned;
+    this.showRejoinToast(earned, offlineSeconds, false);
+    this.save();
+  }
+
+  showRejoinToast(earned, offlineSeconds, noCps) {
+    const duration = this.fmtDuration(offlineSeconds);
+    const container = document.getElementById('toastContainer');
+    const el = document.createElement('div');
+    el.className = 'toast offline-toast';
+    if (noCps) {
+      el.innerHTML = `⏳ Während du weg warst: <b>Aktiviere das Spiel, um offline Cycles zu generieren.</b>`;
+    } else {
+      el.innerHTML = `⏳ Während du weg warst: <b>+<span class="offline-counter">0</span> Cycles</b> in ${duration} idle Zeit`;
+    }
+    el.style.borderColor = 'var(--warn)';
+    el.style.fontSize = '1rem';
+    el.style.padding = '12px 20px';
+    container.appendChild(el);
+
+    if (!noCps && earned > 0) {
+      const counter = el.querySelector('.offline-counter');
+      const target = Math.floor(earned);
+      const durationMs = 1500;
+      const startTime = performance.now();
+      const step = (t) => {
+        const progress = Math.min((t - startTime) / durationMs, 1);
+        const value = Math.floor(progress * target);
+        if (counter) counter.textContent = this.fmt(value);
+        if (progress < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }
+
+    setTimeout(() => {
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(-20px)';
+      el.style.transition = 'opacity 0.5s, transform 0.5s';
+      setTimeout(() => el.remove(), 500);
+    }, 5000);
+  }
+
+  fmtDuration(totalSeconds) {
+    if (totalSeconds < 60) return Math.floor(totalSeconds) + 's';
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = Math.floor(totalSeconds % 60);
+    if (minutes < 60) return minutes + 'm ' + seconds + 's';
+    const hours = Math.floor(minutes / 60);
+    const remMin = minutes % 60;
+    return hours + 'h ' + remMin + 'm';
   }
 
   click(e) {
@@ -1047,7 +1138,8 @@ class Game {
       pagerDutyTriggered: this.pagerDutyTriggered,
       pagerDutyDate: this.pagerDutyDate,
       legacyCodeTriggered: this.legacyCodeTriggered,
-      sessionStart: this.sessionStart
+      sessionStart: this.sessionStart,
+      lastOnline: Date.now()
     };
     localStorage.setItem('devopsClicker', JSON.stringify(data));
     this.toast('💾 Gespeichert!');
@@ -1081,6 +1173,7 @@ class Game {
       this.pagerDutyDate = data.pagerDutyDate || null;
       this.legacyCodeTriggered = data.legacyCodeTriggered || false;
       this.sessionStart = data.sessionStart || Date.now();
+      this.lastOnline = data.lastOnline || 0;
       const startBonus = this.achievements.has('shadow_it') ? 50 : 0;
       if (this.cycles < startBonus) this.cycles = startBonus;
       this.clickPower = this.calculateClickPower();
@@ -1170,6 +1263,7 @@ class Game {
         this.pagerDutyDate = data.pagerDutyDate || null;
         this.legacyCodeTriggered = data.legacyCodeTriggered || false;
         this.sessionStart = data.sessionStart || Date.now();
+        this.lastOnline = data.lastOnline || 0;
         const startBonus = this.achievements.has('shadow_it') ? 50 : 0;
         if (this.cycles < startBonus) this.cycles = startBonus;
         this.clickPower = this.calculateClickPower();
