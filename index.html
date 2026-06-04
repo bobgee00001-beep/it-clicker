@@ -254,6 +254,62 @@
     color: var(--fg);
     font-size: 0.8rem;
   }
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 2000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-box {
+    background: var(--panel);
+    border: 1px solid var(--fg);
+    border-radius: 10px;
+    padding: 24px;
+    max-width: 380px;
+    width: 90%;
+    box-shadow: 0 0 30px rgba(0,255,65,0.2);
+  }
+  .modal-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--fg);
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .modal-stat {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .modal-stat:last-of-type { border-bottom: none; margin-bottom: 16px; }
+  .modal-stat .label { color: var(--text-dim); }
+  .modal-stat .value { color: var(--fg); font-weight: 700; }
+  .modal-stat .gain { color: var(--warn); font-weight: 700; }
+  .modal-actions { display: flex; gap: 10px; }
+  .modal-btn {
+    flex: 1;
+    padding: 10px;
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 700;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    cursor: pointer;
+    background: #141414;
+    color: var(--text);
+  }
+  .modal-btn:hover { border-color: var(--fg); color: var(--fg); }
+  .modal-btn.primary {
+    border-color: var(--fg);
+    color: var(--fg);
+    background: rgba(0,255,65,0.05);
+  }
+  .modal-btn.primary:hover { background: rgba(0,255,65,0.1); }
   @media (max-width: 900px) {
     .main { flex-direction: column; }
     .left-panel, .right-panel { width: 100%; min-width: auto; }
@@ -318,6 +374,21 @@
 
 <div class="toast-container" id="toastContainer"></div>
 
+<div class="modal-overlay" id="prestigeModal">
+  <div class="modal-box">
+    <div class="modal-title">🚀 IPO durchführen?</div>
+    <div class="modal-stat"><span class="label">Aktuelle CPU Cycles</span><span class="value" id="modalCycles">0</span></div>
+    <div class="modal-stat"><span class="label">Bisherige Prestige-Punkte</span><span class="value" id="modalOldPoints">0</span></div>
+    <div class="modal-stat"><span class="label">Neue Prestige-Punkte</span><span class="value gain" id="modalNewPoints">+0</span></div>
+    <div class="modal-stat"><span class="label">Gesamt nach Reset</span><span class="value gain" id="modalTotalPoints">0</span></div>
+    <div class="modal-stat"><span class="label">Multiplier nach Reset</span><span class="value gain" id="modalMultiplier">1.00x</span></div>
+    <div class="modal-actions">
+      <button class="modal-btn" onclick="game.closePrestigeModal()">Abbrechen</button>
+      <button class="modal-btn primary" onclick="game.confirmPrestige()">IPO starten</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const UPGRADES = {
   hardware: [
@@ -377,6 +448,7 @@ class Game {
     this.cps = 0;
     this.clickPower = 1;
     this.prestige = 0;
+    this.prestigePoints = 0;
     this.multiplier = 1;
     this.upgrades = {};
     this.tickets = [];
@@ -646,8 +718,22 @@ class Game {
 
   prestige() {
     if (this.cycles < 1000000) return;
+    const newPoints = Math.floor(Math.sqrt(this.cycles / 1_000_000));
+    document.getElementById('modalCycles').textContent = this.fmt(Math.floor(this.cycles));
+    document.getElementById('modalOldPoints').textContent = this.prestigePoints;
+    document.getElementById('modalNewPoints').textContent = '+' + newPoints;
+    document.getElementById('modalTotalPoints').textContent = this.prestigePoints + newPoints;
+    const newMult = 1 + ((this.prestigePoints + newPoints) * 0.1);
+    document.getElementById('modalMultiplier').textContent = newMult.toFixed(2) + 'x';
+    document.getElementById('prestigeModal').style.display = 'flex';
+  }
+
+  confirmPrestige() {
+    if (this.cycles < 1000000) { this.closePrestigeModal(); return; }
+    const newPoints = Math.floor(Math.sqrt(this.cycles / 1_000_000));
+    this.prestigePoints += newPoints;
     this.prestige++;
-    this.multiplier = 1 + (this.prestige * 0.1);
+    this.multiplier = 1 + (this.prestigePoints * 0.1);
     this.cycles = 0;
     this.upgrades = {};
     this.tickets = [];
@@ -655,8 +741,14 @@ class Game {
     this.clickPower = 1;
     this.cpsPenalty = 1;
     this.cpsPenaltyTimer = 0;
-    this.toast(`IPO #${this.prestige}! Multiplier: ${this.multiplier.toFixed(2)}x`);
+    this.totalEarned = 0;
+    this.closePrestigeModal();
+    this.toast(`IPO #${this.prestige}! +${newPoints} Prestige-Punkte — ${this.multiplier.toFixed(2)}x Multiplier`);
     this.checkAchievements();
+  }
+
+  closePrestigeModal() {
+    document.getElementById('prestigeModal').style.display = 'none';
   }
 
   checkAchievements() {
@@ -758,7 +850,7 @@ class Game {
     document.getElementById('resourceDisplay').textContent = 'CPU Cycles: ' + this.fmt(Math.floor(this.cycles));
     document.getElementById('cpsDisplay').textContent = '(' + (this.cps >= 0 ? '+' : '') + this.fmt(this.cps) + '/s)';
     document.getElementById('clickPower').textContent = this.fmt(this.clickPower);
-    document.getElementById('prestigeLevel').textContent = this.prestige;
+    document.getElementById('prestigeLevel').textContent = this.prestigePoints;
     document.getElementById('multiplierDisplay').textContent = 'Multiplier: ' + this.multiplier.toFixed(2) + 'x';
 
     const prestigeBtn = document.getElementById('prestigeBtn');
@@ -780,6 +872,7 @@ class Game {
       totalClicks: this.totalClicks,
       totalEarned: this.totalEarned,
       prestige: this.prestige,
+      prestigePoints: this.prestigePoints,
       multiplier: this.multiplier,
       upgrades: this.upgrades,
       ticketsResolved: this.ticketsResolved,
@@ -800,6 +893,7 @@ class Game {
       this.totalClicks = data.totalClicks || 0;
       this.totalEarned = data.totalEarned || 0;
       this.prestige = data.prestige || 0;
+      this.prestigePoints = data.prestigePoints || 0;
       this.multiplier = data.multiplier || 1;
       this.upgrades = data.upgrades || {};
       this.ticketsResolved = data.ticketsResolved || 0;
@@ -825,6 +919,7 @@ class Game {
       totalClicks: this.totalClicks,
       totalEarned: this.totalEarned,
       prestige: this.prestige,
+      prestigePoints: this.prestigePoints,
       multiplier: this.multiplier,
       upgrades: this.upgrades,
       ticketsResolved: this.ticketsResolved,
@@ -861,6 +956,7 @@ class Game {
         this.totalClicks = data.totalClicks || 0;
         this.totalEarned = data.totalEarned || 0;
         this.prestige = data.prestige || 0;
+        this.prestigePoints = data.prestigePoints || 0;
         this.multiplier = data.multiplier || 1;
         this.upgrades = data.upgrades || {};
         this.ticketsResolved = data.ticketsResolved || 0;
