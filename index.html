@@ -314,6 +314,34 @@
     .main { flex-direction: column; }
     .left-panel, .right-panel { width: 100%; min-width: auto; }
   }
+  .achievements-header { display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 4px; margin-bottom: 8px; border-bottom: 1px solid var(--panel-border); }
+  .achievements-count { font-size: 0.85rem; color: var(--fg); }
+  .achievements-bonus { font-size: 0.8rem; color: var(--fg-dim); }
+  .achievement-card { border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 8px; background: var(--panel); transition: all 0.2s; display: flex;
+    flex-direction: column; gap: 6px; }
+  .achievement-card:hover { border-color: var(--fg-dark); }
+  .achievement-card.unlocked { border-color: var(--fg); background: rgba(0,255,65,0.05); }
+  .achievement-card.locked { opacity: 0.55; }
+  .achievement-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .achievement-name { font-weight: 700; font-size: 0.9rem; color: var(--text); }
+  .achievement-card.unlocked .achievement-name { color: var(--fg); }
+  .achievement-reward { font-size: 0.75rem; color: var(--fg); background: rgba(0,255,65,0.1);
+    padding: 2px 8px; border-radius: 12px; white-space: nowrap; }
+  .achievement-desc { font-size: 0.8rem; color: var(--text-dim); line-height: 1.2; }
+  .achievement-progress { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .achievement-progress-bar { flex: 1; height: 6px; background: #1a1a1a; border-radius: 3px;
+    overflow: hidden; }
+  .achievement-progress-fill { height: 100%; background: var(--warn); border-radius: 3px;
+    transition: width 0.3s; }
+  .achievement-card.unlocked .achievement-progress-fill { background: var(--fg); }
+  .achievement-progress-text { font-size: 0.75rem; color: var(--text-dim); min-width: 60px;
+    text-align: right; }
+  .bonus-summary { border: 1px dashed var(--fg-dark); border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 12px; background: rgba(0,255,65,0.03); }
+  .bonus-summary-title { font-weight: 700; font-size: 0.85rem; color: var(--fg); margin-bottom: 4px; }
+  .bonus-summary-item { font-size: 0.8rem; color: var(--fg-dim); }
 </style>
 </head>
 <body>
@@ -428,16 +456,28 @@ const TICKET_TITLES = {
 };
 
 const ACHIEVEMENTS = [
-  { id: 'first_click', name: 'Erster Klick', desc: 'Klicke zum ersten Mal', check: g => g.totalClicks >= 1 },
-  { id: 'hundred', name: 'Centurion', desc: '100 Cycles gesammelt', check: g => g.cycles >= 100 },
-  { id: 'thousand', name: 'Kilo', desc: '1.000 Cycles', check: g => g.cycles >= 1000 },
-  { id: 'million', name: 'Mega', desc: '1.000.000 Cycles', check: g => g.cycles >= 1000000 },
-  { id: 'first_upgrade', name: 'Investor', desc: 'Erstes Upgrade gekauft', check: g => Object.values(g.upgrades).some(c => c > 0) },
-  { id: 'first_ticket', name: 'Support Hero', desc: 'Erstes Ticket gelöst', check: g => g.ticketsResolved >= 1 },
-  { id: 'first_prestige', name: 'IPO!', desc: 'Erstes Prestige', check: g => g.prestige >= 1 },
-  { id: 'ten_tickets', name: 'Ticket Machine', desc: '10 Tickets gelöst', check: g => g.ticketsResolved >= 10 },
-  { id: 'sev1_survivor', name: 'SEV1 Survivor', desc: 'Überlebe einen SEV1', check: g => g.sev1Survived },
-  { id: 'all_hardware', name: 'Hardware King', desc: 'Alle Hardware-Upgrades', check: g => ['pi','ssd','cpu','rack'].every(id => (g.upgrades[id]||0)>0) },
+  // Phase 1: Basic milestones (keep existing)
+  { id: 'first_click', name: 'Erster Klick', desc: 'Klicke zum ersten Mal', check: g => g.totalClicks >= 1, reward: { type: 'clickBonus', value: 0.01 }, rewardDesc: '+1% Click Power' },
+  { id: 'hundred', name: 'Centurion', desc: '100 Cycles gesammelt', check: g => g.totalEarned >= 100, reward: { type: 'cpsBonus', value: 0.02 }, rewardDesc: '+2% CPS' },
+  { id: 'thousand', name: 'Kilo', desc: '1.000 Cycles', check: g => g.totalEarned >= 1000, reward: { type: 'cpsBonus', value: 0.03 }, rewardDesc: '+3% CPS' },
+  { id: 'million', name: 'Mega', desc: '1.000.000 Cycles', check: g => g.totalEarned >= 1000000, reward: { type: 'cpsBonus', value: 0.05 }, rewardDesc: '+5% CPS' },
+  { id: 'first_upgrade', name: 'Investor', desc: 'Erstes Upgrade gekauft', check: g => Object.values(g.upgrades).some(c => c > 0), reward: { type: 'discount', value: 0.03 }, rewardDesc: '-3% Upgrade-Kosten' },
+  { id: 'first_ticket', name: 'Support Hero', desc: 'Erstes Ticket gelöst', check: g => g.ticketsResolved >= 1, reward: { type: 'ticketBonus', value: 0.05 }, rewardDesc: '+5% Ticket-Rewards' },
+  { id: 'first_prestige', name: 'IPO!', desc: 'Erstes Prestige', check: g => g.prestige >= 1, reward: { type: 'prestigeBonus', value: 0.10 }, rewardDesc: '+10% Prestige-Punkte' },
+  { id: 'ten_tickets', name: 'Ticket Machine', desc: '10 Tickets gelöst', check: g => g.ticketsResolved >= 10, reward: { type: 'ticketSpeed', value: 0.05 }, rewardDesc: '+5% Ticket-Speed' },
+  // Phase 2: IT-themed achievements (new)
+  { id: 'its_always_dns', name: "It's always DNS", desc: 'Lasse 3 P1-Tickets autogeschlossen', check: g => g.p1AutoClosed >= 3, reward: { type: 'cpsBonus', value: 0.08 }, rewardDesc: '+8% CPS' },
+  { id: 'turn_it_off', name: 'Turned it off and on', desc: 'Löse 50 Tickets', check: g => g.ticketsResolved >= 50, reward: { type: 'ticketBonus', value: 0.10 }, rewardDesc: '+10% Ticket-Rewards' },
+  { id: 'printer_phone', name: 'Printer over phone', desc: 'Löse 10 Tickets in unter 2 Sekunden', check: g => g.fastTickets >= 10, reward: { type: 'clickBonus', value: 0.05 }, rewardDesc: '+5% Click Power' },
+  { id: 'budget_approved', name: 'Budget approved!', desc: 'Prestige 5x', check: g => g.prestige >= 5, reward: { type: 'prestigeBonus', value: 0.25 }, rewardDesc: '+25% Prestige-Punkte' },
+  { id: 'ms_certified', name: 'Microsoft Certified', desc: 'Alle Upgrades in allen Kategorien', check: g => g.allCategoriesMaxed, reward: { type: 'cpsBonus', value: 0.15 }, rewardDesc: '+15% CPS' },
+  { id: 'coffee_coder', name: 'Coffee → Code', desc: 'Klicke 1.000x in einer Session', check: g => g.totalClicks >= 1000, reward: { type: 'clickBonus', value: 0.10 }, rewardDesc: '+10% Click Power' },
+  { id: 'zero_day', name: 'Zero Day', desc: 'Überlebe gleichzeitig 3 P1-Tickets', check: g => g.maxSimultaneousP1 >= 3, reward: { type: 'cpsBonus', value: 0.12 }, rewardDesc: '+12% CPS' },
+  { id: 'golden_cursor', name: 'Golden Cursor', desc: 'Klicke 10.000x insgesamt', check: g => g.totalClicks >= 10000, reward: { type: 'clickBonus', value: 0.20 }, rewardDesc: '+20% Click Power (Golden!)' },
+  { id: 'burn_rate', name: 'Burn Rate Critical', desc: 'Spendiere 1M Cycles in unter 60s', check: g => g.maxSpendIn60s >= 1000000, reward: { type: 'discount', value: 0.10 }, rewardDesc: '-10% Upgrade-Kosten' },
+  { id: 'unicorn', name: 'Unicorn Startup', desc: 'Erreiche 10M Cycles', check: g => g.totalEarned >= 10000000, reward: { type: 'cpsBonus', value: 0.30 }, rewardDesc: '+30% CPS' },
+  // Phase 3: Meta-achievements
+  { id: 'all_achievements', name: 'Completionist', desc: 'Schalte alle anderen Achievements frei', check: g => g.numAchievements >= 19, reward: { type: 'cpsBonus', value: 0.50 }, rewardDesc: '+50% CPS (Legendär!)' },
 ];
 
 class Game {
@@ -462,9 +502,16 @@ class Game {
     this.lastTick = Date.now();
     this.lastTicketSpawn = Date.now();
     this.achievements = new Set();
+    this.achievementProgress = {}; // {id: current_value}
+    this.p1AutoClosed = 0;
+    this.fastTickets = 0;
+    this.maxSpendIn60s = 0;
+    this.spendEvents = []; // {time, amount}
+    this.allCategoriesMaxed = false;
+    this.maxSimultaneousP1 = 0;
     this.currentTab = 'hardware';
-    this.tabs = ['hardware', 'cloud', 'ai', 'click', 'itsm'];
-    this.tabNames = { hardware: 'Hardware', cloud: 'Cloud', ai: 'AI/Quantum', click: 'Click', itsm: 'ITSM' };
+    this.tabs = ['hardware', 'cloud', 'ai', 'click', 'itsm', 'achievements'];
+    this.tabNames = { hardware: 'Hardware', cloud: 'Cloud', ai: 'AI/Quantum', click: 'Click', itsm: 'ITSM', achievements: '🏆 Erfolge' };
     this.init();
   }
 
@@ -533,6 +580,8 @@ class Game {
       cps += cps * (this.tickets.length * 0.01 * autoTicket);
     }
     cps *= this.multiplier;
+    cps *= this.getAchievementReward('cpsBonus');
+    cps *= this.getAchievementReward('ticketBonus');
     if (this.cpsPenaltyTimer > 0) cps *= this.cpsPenalty;
     if (this.sev1Active) cps = 0;
     return cps;
@@ -543,6 +592,7 @@ class Game {
     for (const u of UPGRADES.click) {
       power += (this.upgrades[u.id] || 0) * u.clickBonus;
     }
+    power *= this.getAchievementReward('clickBonus');
     return power;
   }
 
@@ -657,8 +707,13 @@ class Game {
       sla,
       maxSla: sla,
       reward,
-      autoCloseTimer: this.getAutoClose(type)
+      autoCloseTimer: this.getAutoClose(type),
+      spawnTime: Date.now()
     };
+    if (type === 'p1') {
+      const currentP1 = this.tickets.filter(t => t.type === 'p1').length + 1;
+      this.maxSimultaneousP1 = Math.max(this.maxSimultaneousP1, currentP1);
+    }
 
     this.tickets.push(ticket);
     this.renderTickets();
@@ -666,6 +721,12 @@ class Game {
 
   resolveTicket(index, auto = false) {
     const t = this.tickets[index];
+    if (!t) return;
+    if (!auto && t.spawnTime) {
+      const resolveTime = Date.now() - t.spawnTime;
+      if (resolveTime < 2000) this.fastTickets++;
+    }
+    if (auto && t.type === 'p1') this.p1AutoClosed++;
     const gain = t.reward * this.multiplier;
     this.cycles += gain;
     this.totalEarned += gain;
@@ -705,6 +766,7 @@ class Game {
 
     this.cycles -= cost;
     this.upgrades[id] = count + 1;
+    this.updateSpendTracking(cost);
 
     if (u.baseCps || u.clickBonus) {
       this.toast(`${u.name} gekauft!`);
@@ -754,11 +816,60 @@ class Game {
   checkAchievements() {
     for (const a of ACHIEVEMENTS) {
       if (this.achievements.has(a.id)) continue;
+      const progress = this.getProgress(a);
+      this.achievementProgress[a.id] = progress.current;
       if (a.check(this)) {
         this.achievements.add(a.id);
-        this.toast(`🏆 ${a.name}: ${a.desc}`);
+        this.toast(`🏆 ${a.name}: ${a.desc} — ${a.rewardDesc}`, 'warn');
+        this.renderAchievements();
+        this.updateDisplay();
       }
     }
+  }
+
+  getProgress(a) {
+    let cur = 0, max = 1;
+    if (a.id === 'first_click') { cur = this.totalClicks; max = 1; }
+    else if (a.id === 'hundred') { cur = Math.floor(this.totalEarned); max = 100; }
+    else if (a.id === 'thousand') { cur = Math.floor(this.totalEarned); max = 1000; }
+    else if (a.id === 'million') { cur = Math.floor(this.totalEarned); max = 1000000; }
+    else if (a.id === 'first_upgrade') { cur = Object.values(this.upgrades).filter(c => c > 0).length; max = 1; }
+    else if (a.id === 'first_ticket') { cur = this.ticketsResolved; max = 1; }
+    else if (a.id === 'first_prestige') { cur = this.prestige; max = 1; }
+    else if (a.id === 'ten_tickets') { cur = this.ticketsResolved; max = 10; }
+    else if (a.id === 'its_always_dns') { cur = this.p1AutoClosed; max = 3; }
+    else if (a.id === 'turn_it_off') { cur = this.ticketsResolved; max = 50; }
+    else if (a.id === 'printer_phone') { cur = this.fastTickets; max = 10; }
+    else if (a.id === 'budget_approved') { cur = this.prestige; max = 5; }
+    else if (a.id === 'ms_certified') { cur = this.checkAllCategoriesMaxed() ? 1 : 0; max = 1; }
+    else if (a.id === 'coffee_coder') { cur = this.totalClicks; max = 1000; }
+    else if (a.id === 'zero_day') { cur = this.maxSimultaneousP1; max = 3; }
+    else if (a.id === 'golden_cursor') { cur = this.totalClicks; max = 10000; }
+    else if (a.id === 'burn_rate') { cur = Math.min(this.maxSpendIn60s, 1000000); max = 1000000; }
+    else if (a.id === 'unicorn') { cur = Math.floor(this.totalEarned); max = 10000000; }
+    else if (a.id === 'all_achievements') { cur = this.achievements.size; max = 19; }
+    return { current: cur, target: max, pct: Math.min(100, (cur / max) * 100) };
+  }
+
+  checkAllCategoriesMaxed() {
+    for (const cat of ['hardware', 'cloud', 'ai', 'itsm']) {
+      for (const u of UPGRADES[cat]) {
+        if (!this.upgrades[u.id] || this.upgrades[u.id] < 1) return false;
+      }
+    }
+    this.allCategoriesMaxed = true;
+    return true;
+  }
+
+  getAchievementReward(type) {
+    let mult = 1;
+    for (const a of ACHIEVEMENTS) {
+      if (!this.achievements.has(a.id)) continue;
+      if (a.reward && a.reward.type === type) {
+        mult += a.reward.value;
+      }
+    }
+    return mult;
   }
 
   toast(msg, type = 'normal') {
@@ -779,7 +890,7 @@ class Game {
       const btn = document.createElement('button');
       btn.className = 'shop-tab' + (tab === this.currentTab ? ' active' : '');
       btn.textContent = this.tabNames[tab];
-      btn.onclick = () => { this.currentTab = tab; this.renderTabs(); this.renderUpgrades(); };
+      btn.onclick = () => { this.currentTab = tab; this.renderTabs(); if (tab === 'achievements') this.renderAchievements(); else this.renderUpgrades(); };
       container.appendChild(btn);
     }
   }
@@ -866,6 +977,14 @@ class Game {
     this.renderTickets();
   }
 
+  updateSpendTracking(amount) {
+    const now = Date.now();
+    this.spendEvents = this.spendEvents.filter(e => now - e.time < 60000);
+    this.spendEvents.push({ time: now, amount });
+    const total = this.spendEvents.reduce((sum, e) => sum + e.amount, 0);
+    this.maxSpendIn60s = Math.max(this.maxSpendIn60s, total);
+  }
+
   save() {
     const data = {
       cycles: this.cycles,
@@ -878,7 +997,13 @@ class Game {
       ticketsResolved: this.ticketsResolved,
       ticketsExpired: this.ticketsExpired,
       sev1Survived: this.sev1Survived,
-      achievements: Array.from(this.achievements)
+      achievements: Array.from(this.achievements),
+      achievementProgress: this.achievementProgress,
+      p1AutoClosed: this.p1AutoClosed,
+      fastTickets: this.fastTickets,
+      maxSpendIn60s: this.maxSpendIn60s,
+      allCategoriesMaxed: this.allCategoriesMaxed,
+      maxSimultaneousP1: this.maxSimultaneousP1
     };
     localStorage.setItem('devopsClicker', JSON.stringify(data));
     this.toast('💾 Gespeichert!');
@@ -900,6 +1025,12 @@ class Game {
       this.ticketsExpired = data.ticketsExpired || 0;
       this.sev1Survived = data.sev1Survived || false;
       this.achievements = new Set(data.achievements || []);
+      this.achievementProgress = data.achievementProgress || {};
+      this.p1AutoClosed = data.p1AutoClosed || 0;
+      this.fastTickets = data.fastTickets || 0;
+      this.maxSpendIn60s = data.maxSpendIn60s || 0;
+      this.allCategoriesMaxed = data.allCategoriesMaxed || false;
+      this.maxSimultaneousP1 = data.maxSimultaneousP1 || 0;
       this.clickPower = this.calculateClickPower();
       this.toast('📂 Spielstand geladen!');
     } catch (e) {
@@ -926,7 +1057,13 @@ class Game {
       ticketsExpired: this.ticketsExpired,
       sev1Survived: this.sev1Survived,
       achievements: Array.from(this.achievements),
-      version: 1,
+      achievementProgress: this.achievementProgress,
+      p1AutoClosed: this.p1AutoClosed,
+      fastTickets: this.fastTickets,
+      maxSpendIn60s: this.maxSpendIn60s,
+      allCategoriesMaxed: this.allCategoriesMaxed,
+      maxSimultaneousP1: this.maxSimultaneousP1,
+      version: 2,
       exportedAt: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -963,6 +1100,12 @@ class Game {
         this.ticketsExpired = data.ticketsExpired || 0;
         this.sev1Survived = data.sev1Survived || false;
         this.achievements = new Set(data.achievements || []);
+        this.achievementProgress = data.achievementProgress || {};
+        this.p1AutoClosed = data.p1AutoClosed || 0;
+        this.fastTickets = data.fastTickets || 0;
+        this.maxSpendIn60s = data.maxSpendIn60s || 0;
+        this.allCategoriesMaxed = data.allCategoriesMaxed || false;
+        this.maxSimultaneousP1 = data.maxSimultaneousP1 || 0;
         this.clickPower = this.calculateClickPower();
         this.save();
         this.toast('📥 Savegame importiert!');
@@ -975,6 +1118,64 @@ class Game {
     input.value = '';
   }
 }
+
+
+  renderAchievements() {
+    const container = document.getElementById('upgradeList');
+    container.innerHTML = '';
+
+    // Bonus summary header
+    const summary = document.createElement('div');
+    summary.className = 'bonus-summary';
+    const bonuses = [
+      { type: 'cpsBonus', label: 'CPS Bonus' },
+      { type: 'clickBonus', label: 'Click Power' },
+      { type: 'ticketBonus', label: 'Ticket Rewards' },
+      { type: 'discount', label: 'Upgrade Discount' },
+      { type: 'prestigeBonus', label: 'Prestige Bonus' },
+      { type: 'ticketSpeed', label: 'Ticket Speed' }
+    ];
+    let bonusHtml = '<div class="bonus-summary-title">🎯 Aktive Boni</div>';
+    let hasAny = false;
+    for (const b of bonuses) {
+      const mult = this.getAchievementReward(b.type);
+      const pct = Math.round((mult - 1) * 100);
+      if (pct > 0) {
+        bonusHtml += `<div class="bonus-summary-item">+${pct}% ${b.label}</div>`;
+        hasAny = true;
+      }
+    }
+    if (!hasAny) bonusHtml += '<div class="bonus-summary-item">Noch keine Boni freigeschaltet</div>';
+    summary.innerHTML = bonusHtml;
+    container.appendChild(summary);
+
+    // Header with count
+    const header = document.createElement('div');
+    header.className = 'achievements-header';
+    header.innerHTML = `<span class="achievements-count">${this.achievements.size} / ${ACHIEVEMENTS.length} freigeschaltet</span><span class="achievements-bonus">${Math.round((this.getAchievementReward('cpsBonus') - 1) * 100)}% CPS Bonus</span>`;
+    container.appendChild(header);
+
+    // Achievement cards
+    for (const a of ACHIEVEMENTS) {
+      const unlocked = this.achievements.has(a.id);
+      const prog = this.getProgress(a);
+      const card = document.createElement('div');
+      const cardClass = unlocked ? 'achievement-card unlocked' : (prog.pct >= 100 ? 'achievement-card' : 'achievement-card locked');
+      card.className = cardClass;
+      card.innerHTML = `
+        <div class="achievement-top">
+          <span class="achievement-name">${a.name}</span>
+          <span class="achievement-reward">${a.rewardDesc}</span>
+        </div>
+        <div class="achievement-desc">${a.desc}</div>
+        <div class="achievement-progress">
+          <div class="achievement-progress-bar"><div class="achievement-progress-fill" style="width:${prog.pct}%"></div></div>
+          <span class="achievement-progress-text">${unlocked ? 'Erledigt' : `${prog.current}/${prog.target}`}</span>
+        </div>
+      `;
+      container.appendChild(card);
+    }
+  }
 
 const game = new Game();
 </script>
