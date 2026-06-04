@@ -456,34 +456,36 @@ const TICKET_TITLES = {
 };
 
 const ACHIEVEMENTS = [
-  // Phase 1: Basic milestones (keep existing)
   { id: 'first_click', name: 'Erster Klick', desc: 'Klicke zum ersten Mal', check: g => g.totalClicks >= 1, reward: { type: 'clickBonus', value: 0.01 }, rewardDesc: '+1% Click Power' },
   { id: 'hundred', name: 'Centurion', desc: '100 Cycles gesammelt', check: g => g.totalEarned >= 100, reward: { type: 'cpsBonus', value: 0.02 }, rewardDesc: '+2% CPS' },
   { id: 'thousand', name: 'Kilo', desc: '1.000 Cycles', check: g => g.totalEarned >= 1000, reward: { type: 'cpsBonus', value: 0.03 }, rewardDesc: '+3% CPS' },
   { id: 'million', name: 'Mega', desc: '1.000.000 Cycles', check: g => g.totalEarned >= 1000000, reward: { type: 'cpsBonus', value: 0.05 }, rewardDesc: '+5% CPS' },
-  { id: 'first_upgrade', name: 'Investor', desc: 'Erstes Upgrade gekauft', check: g => Object.values(g.upgrades).some(c => c > 0), reward: { type: 'discount', value: 0.03 }, rewardDesc: '-3% Upgrade-Kosten' },
+  { id: 'first_upgrade', name: 'Investor', desc: 'Erstes Upgrade gekauft', check: g => g.upgradesEverBought, reward: { type: 'discount', value: 0.03 }, rewardDesc: '-3% Upgrade-Kosten' },
   { id: 'first_ticket', name: 'Support Hero', desc: 'Erstes Ticket gelöst', check: g => g.ticketsResolved >= 1, reward: { type: 'ticketBonus', value: 0.05 }, rewardDesc: '+5% Ticket-Rewards' },
   { id: 'first_prestige', name: 'IPO!', desc: 'Erstes Prestige', check: g => g.prestige >= 1, reward: { type: 'prestigeBonus', value: 0.10 }, rewardDesc: '+10% Prestige-Punkte' },
   { id: 'ten_tickets', name: 'Ticket Machine', desc: '10 Tickets gelöst', check: g => g.ticketsResolved >= 10, reward: { type: 'ticketSpeed', value: 0.05 }, rewardDesc: '+5% Ticket-Speed' },
-  // Phase 2: IT-themed achievements (new)
-  { id: 'its_always_dns', name: "It's always DNS", desc: 'Lasse 3 P1-Tickets autogeschlossen', check: g => g.p1AutoClosed >= 3, reward: { type: 'cpsBonus', value: 0.08 }, rewardDesc: '+8% CPS' },
-  { id: 'turn_it_off', name: 'Turned it off and on', desc: 'Löse 50 Tickets', check: g => g.ticketsResolved >= 50, reward: { type: 'ticketBonus', value: 0.10 }, rewardDesc: '+10% Ticket-Rewards' },
-  { id: 'printer_phone', name: 'Printer over phone', desc: 'Löse 10 Tickets in unter 2 Sekunden', check: g => g.fastTickets >= 10, reward: { type: 'clickBonus', value: 0.05 }, rewardDesc: '+5% Click Power' },
+  { id: 'its_always_dns', name: "It's always DNS", desc: 'Lasse ein P1-Ticket autogeschlossen', check: g => g.p1AutoClosed >= 1, reward: { type: 'cpsBonus', value: 0.10 }, rewardDesc: '+10% CPS (60s nach Prestige)' },
+  { id: 'have_you_tried', name: 'Turned it off and on', desc: 'Löse 10 Tickets insgesamt', check: g => g.ticketsResolved >= 10, reward: { type: 'ticketBonus', value: 0.05 }, rewardDesc: '+5% Ticket-Rewards' },
+  { id: 'printer_phone', name: 'Printer over phone', desc: 'Löse ein Ticket in unter 2 Sekunden', check: g => g.fastTickets >= 1, reward: { type: 'ticketSpeed', value: 0.01 }, rewardDesc: '+1% Ticket-Spawn-Speed' },
   { id: 'budget_approved', name: 'Budget approved!', desc: 'Prestige 5x', check: g => g.prestige >= 5, reward: { type: 'prestigeBonus', value: 0.25 }, rewardDesc: '+25% Prestige-Punkte' },
-  { id: 'ms_certified', name: 'Microsoft Certified', desc: 'Alle Upgrades in allen Kategorien', check: g => g.allCategoriesMaxed, reward: { type: 'cpsBonus', value: 0.15 }, rewardDesc: '+15% CPS' },
-  { id: 'coffee_coder', name: 'Coffee → Code', desc: 'Klicke 1.000x in einer Session', check: g => g.totalClicks >= 1000, reward: { type: 'clickBonus', value: 0.10 }, rewardDesc: '+10% Click Power' },
-  { id: 'zero_day', name: 'Zero Day', desc: 'Überlebe gleichzeitig 3 P1-Tickets', check: g => g.maxSimultaneousP1 >= 3, reward: { type: 'cpsBonus', value: 0.12 }, rewardDesc: '+12% CPS' },
-  { id: 'golden_cursor', name: 'Golden Cursor', desc: 'Klicke 10.000x insgesamt', check: g => g.totalClicks >= 10000, reward: { type: 'clickBonus', value: 0.20 }, rewardDesc: '+20% Click Power (Golden!)' },
-  { id: 'burn_rate', name: 'Burn Rate Critical', desc: 'Spendiere 1M Cycles in unter 60s', check: g => g.maxSpendIn60s >= 1000000, reward: { type: 'discount', value: 0.10 }, rewardDesc: '-10% Upgrade-Kosten' },
-  { id: 'unicorn', name: 'Unicorn Startup', desc: 'Erreiche 10M Cycles', check: g => g.totalEarned >= 10000000, reward: { type: 'cpsBonus', value: 0.30 }, rewardDesc: '+30% CPS' },
-  // Phase 3: Meta-achievements
-  { id: 'all_achievements', name: 'Completionist', desc: 'Schalte alle anderen Achievements frei', check: g => g.numAchievements >= 19, reward: { type: 'cpsBonus', value: 0.50 }, rewardDesc: '+50% CPS (Legendär!)' },
+  { id: 'ms_certified', name: 'Microsoft Certified', desc: 'Mindestens ein Upgrade in jeder Kategorie', check: g => g.allCategoriesMaxed, reward: { type: 'cpsBonus', value: 0.15 }, rewardDesc: '+15% CPS' },
+  { id: 'monday_morning', name: 'Monday Morning Outage', desc: '100 Klicks Montag 09:00-10:00', check: g => g.mondayClicks >= 100, reward: { type: 'cpsBonus', value: 0.20 }, rewardDesc: '2x CPS Montag 5min' },
+  { id: 'coffee_coder', name: 'Coffee → Code', desc: '1.000 Klicks in einer Session (ohne Prestige)', check: g => g.sessionClicks >= 1000, reward: { type: 'clickBonus', value: 0.02 }, rewardDesc: '+2% Click Power' },
+  { id: 'shadow_it', name: 'Shadow IT', desc: 'Erreiche 100 Cycles ohne Upgrade-Kauf', check: g => g.maxCyclesWithoutUpgrades >= 100, reward: { type: 'startingCycles', value: 50 }, rewardDesc: '+50 Start-Cycles' },
+  { id: 'zero_day', name: 'Zero Day', desc: 'Gleichzeitig 3 P1-Tickets offen', check: g => g.maxSimultaneousP1 >= 3, reward: { type: 'ticketBonus', value: 0.20 }, rewardDesc: '+20% P1-Rewards' },
+  { id: 'migration_master', name: 'Migration Master', desc: '1M Cycles, letzte 100k nur passiv', check: g => g.passiveEarnedSinceLastClick >= 100000 && g.totalEarned >= 1000000, reward: { type: 'cpsBonus', value: 0.20 }, rewardDesc: '+20% Cloud-Einkommen' },
+  { id: 'burn_rate', name: 'Burn Rate Critical', desc: '500k Cycles in unter 60s ausgeben', check: g => g.maxSpendIn60s >= 500000, reward: { type: 'discount', value: 0.10 }, rewardDesc: '-10% Upgrade-Kosten' },
+  { id: 'golden_cursor', name: 'Golden Cursor', desc: '10.000 Klicks insgesamt', check: g => g.totalClicks >= 10000, reward: { type: 'clickBonus', value: 0.05 }, rewardDesc: '+5% Click Power (Golden!)' },
+  { id: 'pager_duty', name: 'PagerDuty 3AM', desc: 'Spiel zwischen 03:00-04:00 geöffnet', check: g => g.pagerDutyTriggered, reward: { type: 'cpsBonus', value: 0.30 }, rewardDesc: '3x CPS 10min (1x/Tag)' },
+  { id: 'legacy_code', name: 'Legacy Code', desc: 'Prestige mit exakt 1.048.576 Cycles', check: g => g.legacyCodeTriggered, reward: { type: 'prestigeBonus', value: 0.10 }, rewardDesc: '+1 Bonus-Prestige-Punkt' },
+  { id: 'unicorn', name: 'Unicorn Startup', desc: '10M Cycles in unter 30 Minuten', check: g => g.totalEarned >= 10000000 && g.sessionPlayTime < 1800000, reward: { type: 'cpsBonus', value: 0.50 }, rewardDesc: '+50% CPS' },
 ];
 
 class Game {
   constructor() {
     this.cycles = 0;
     this.totalClicks = 0;
+    this.sessionClicks = 0;
     this.totalEarned = 0;
     this.cps = 0;
     this.clickPower = 1;
@@ -491,6 +493,8 @@ class Game {
     this.prestigePoints = 0;
     this.multiplier = 1;
     this.upgrades = {};
+    this.upgradesEverBought = false;
+    this.maxCyclesWithoutUpgrades = 0;
     this.tickets = [];
     this.ticketsResolved = 0;
     this.ticketsExpired = 0;
@@ -502,13 +506,19 @@ class Game {
     this.lastTick = Date.now();
     this.lastTicketSpawn = Date.now();
     this.achievements = new Set();
-    this.achievementProgress = {}; // {id: current_value}
+    this.achievementProgress = {};
     this.p1AutoClosed = 0;
     this.fastTickets = 0;
     this.maxSpendIn60s = 0;
-    this.spendEvents = []; // {time, amount}
+    this.spendEvents = [];
     this.allCategoriesMaxed = false;
     this.maxSimultaneousP1 = 0;
+    this.mondayClicks = 0;
+    this.passiveEarnedSinceLastClick = 0;
+    this.pagerDutyTriggered = false;
+    this.pagerDutyDate = null;
+    this.legacyCodeTriggered = false;
+    this.sessionStart = Date.now();
     this.currentTab = 'hardware';
     this.tabs = ['hardware', 'cloud', 'ai', 'click', 'itsm', 'achievements'];
     this.tabNames = { hardware: 'Hardware', cloud: 'Cloud', ai: 'AI/Quantum', click: 'Click', itsm: 'ITSM', achievements: '🏆 Erfolge' };
@@ -517,6 +527,7 @@ class Game {
 
   init() {
     this.load();
+    this.checkPagerDuty();
     this.setupUI();
     this.loop();
     setInterval(() => this.spawnTicket(), 1000);
@@ -537,6 +548,10 @@ class Game {
     this.cycles += gain;
     this.totalEarned += gain;
     this.totalClicks++;
+    this.sessionClicks++;
+    this.passiveEarnedSinceLastClick = 0;
+    const now = new Date();
+    if (now.getDay() === 1 && now.getHours() === 9) this.mondayClicks++;
     this.showClickEffect(e, gain);
     this.checkAchievements();
     this.updateDisplay();
@@ -574,7 +589,6 @@ class Game {
         }
       }
     }
-    // Auto-ticketing bonus
     const autoTicket = this.upgrades['autoticket'] || 0;
     if (autoTicket > 0) {
       cps += cps * (this.tickets.length * 0.01 * autoTicket);
@@ -600,11 +614,14 @@ class Game {
     const now = Date.now();
     const dt = (now - this.lastTick) / 1000;
     this.lastTick = now;
+    this.sessionPlayTime = now - this.sessionStart;
 
     this.cps = this.calculateCps();
     const gain = this.cps * dt;
     this.cycles += gain;
     this.totalEarned += gain;
+    this.passiveEarnedSinceLastClick += gain;
+    if (!this.upgradesEverBought) this.maxCyclesWithoutUpgrades = Math.max(this.maxCyclesWithoutUpgrades, this.cycles);
 
     if (this.cpsPenaltyTimer > 0) {
       this.cpsPenaltyTimer -= dt;
@@ -654,11 +671,9 @@ class Game {
       }
     }
 
-    // Backlog warning
     const openCount = this.tickets.length;
     document.getElementById('backlogWarning').style.display = openCount > 5 ? 'block' : 'none';
 
-    // SEV1
     if (openCount > 10 && !this.sev1Active) {
       this.triggerSev1();
     }
@@ -682,7 +697,8 @@ class Game {
 
   spawnTicket() {
     const now = Date.now();
-    const interval = 5000 + Math.random() * 10000;
+    const speedMult = this.getAchievementReward('ticketSpeed');
+    const interval = (5000 + Math.random() * 10000) / speedMult;
     if (now - this.lastTicketSpawn < interval) return;
     this.lastTicketSpawn = now;
 
@@ -760,12 +776,14 @@ class Game {
     if (!u) return;
 
     const count = this.upgrades[id] || 0;
-    const cost = Math.floor(u.baseCost * Math.pow(1.15, count));
+    const discount = this.getAchievementReward('discount') - 1;
+    const cost = Math.max(1, Math.floor(u.baseCost * Math.pow(1.15, count) * (1 - discount)));
 
     if (this.cycles < cost) return;
 
     this.cycles -= cost;
     this.upgrades[id] = count + 1;
+    this.upgradesEverBought = true;
     this.updateSpendTracking(cost);
 
     if (u.baseCps || u.clickBonus) {
@@ -792,25 +810,41 @@ class Game {
 
   confirmPrestige() {
     if (this.cycles < 1000000) { this.closePrestigeModal(); return; }
+    if (Math.floor(this.cycles) === 1048576) this.legacyCodeTriggered = true;
     const newPoints = Math.floor(Math.sqrt(this.cycles / 1_000_000));
-    this.prestigePoints += newPoints;
+    const bonusPoint = this.legacyCodeTriggered && !this.achievements.has('legacy_code') ? 1 : 0;
+    this.prestigePoints += newPoints + bonusPoint;
     this.prestige++;
     this.multiplier = 1 + (this.prestigePoints * 0.1);
     this.cycles = 0;
     this.upgrades = {};
+    this.upgradesEverBought = false;
     this.tickets = [];
     this.cps = 0;
     this.clickPower = 1;
     this.cpsPenalty = 1;
     this.cpsPenaltyTimer = 0;
     this.totalEarned = 0;
+    this.sessionClicks = 0;
+    this.sessionStart = Date.now();
+    this.passiveEarnedSinceLastClick = 0;
+    this.maxCyclesWithoutUpgrades = 0;
     this.closePrestigeModal();
-    this.toast(`IPO #${this.prestige}! +${newPoints} Prestige-Punkte — ${this.multiplier.toFixed(2)}x Multiplier`);
+    this.toast(`IPO #${this.prestige}! +${newPoints + bonusPoint} Prestige-Punkte — ${this.multiplier.toFixed(2)}x Multiplier`);
     this.checkAchievements();
   }
 
   closePrestigeModal() {
     document.getElementById('prestigeModal').style.display = 'none';
+  }
+
+  checkPagerDuty() {
+    const now = new Date();
+    const key = `${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}`;
+    if (now.getHours() === 3 && this.pagerDutyDate !== key) {
+      this.pagerDutyTriggered = true;
+      this.pagerDutyDate = key;
+    }
   }
 
   checkAchievements() {
@@ -833,29 +867,32 @@ class Game {
     else if (a.id === 'hundred') { cur = Math.floor(this.totalEarned); max = 100; }
     else if (a.id === 'thousand') { cur = Math.floor(this.totalEarned); max = 1000; }
     else if (a.id === 'million') { cur = Math.floor(this.totalEarned); max = 1000000; }
-    else if (a.id === 'first_upgrade') { cur = Object.values(this.upgrades).filter(c => c > 0).length; max = 1; }
+    else if (a.id === 'first_upgrade') { cur = this.upgradesEverBought ? 1 : 0; max = 1; }
     else if (a.id === 'first_ticket') { cur = this.ticketsResolved; max = 1; }
     else if (a.id === 'first_prestige') { cur = this.prestige; max = 1; }
     else if (a.id === 'ten_tickets') { cur = this.ticketsResolved; max = 10; }
-    else if (a.id === 'its_always_dns') { cur = this.p1AutoClosed; max = 3; }
-    else if (a.id === 'turn_it_off') { cur = this.ticketsResolved; max = 50; }
-    else if (a.id === 'printer_phone') { cur = this.fastTickets; max = 10; }
+    else if (a.id === 'its_always_dns') { cur = this.p1AutoClosed; max = 1; }
+    else if (a.id === 'have_you_tried') { cur = this.ticketsResolved; max = 10; }
+    else if (a.id === 'printer_phone') { cur = this.fastTickets; max = 1; }
     else if (a.id === 'budget_approved') { cur = this.prestige; max = 5; }
     else if (a.id === 'ms_certified') { cur = this.checkAllCategoriesMaxed() ? 1 : 0; max = 1; }
-    else if (a.id === 'coffee_coder') { cur = this.totalClicks; max = 1000; }
+    else if (a.id === 'monday_morning') { cur = this.mondayClicks; max = 100; }
+    else if (a.id === 'coffee_coder') { cur = this.sessionClicks; max = 1000; }
+    else if (a.id === 'shadow_it') { cur = Math.min(Math.floor(this.maxCyclesWithoutUpgrades), 100); max = 100; }
     else if (a.id === 'zero_day') { cur = this.maxSimultaneousP1; max = 3; }
+    else if (a.id === 'migration_master') { cur = Math.min(Math.floor(this.passiveEarnedSinceLastClick), 100000); max = 100000; }
+    else if (a.id === 'burn_rate') { cur = Math.min(this.maxSpendIn60s, 500000); max = 500000; }
     else if (a.id === 'golden_cursor') { cur = this.totalClicks; max = 10000; }
-    else if (a.id === 'burn_rate') { cur = Math.min(this.maxSpendIn60s, 1000000); max = 1000000; }
+    else if (a.id === 'pager_duty') { cur = this.pagerDutyTriggered ? 1 : 0; max = 1; }
+    else if (a.id === 'legacy_code') { cur = this.legacyCodeTriggered ? 1 : 0; max = 1; }
     else if (a.id === 'unicorn') { cur = Math.floor(this.totalEarned); max = 10000000; }
-    else if (a.id === 'all_achievements') { cur = this.achievements.size; max = 19; }
     return { current: cur, target: max, pct: Math.min(100, (cur / max) * 100) };
   }
 
   checkAllCategoriesMaxed() {
     for (const cat of ['hardware', 'cloud', 'ai', 'itsm']) {
-      for (const u of UPGRADES[cat]) {
-        if (!this.upgrades[u.id] || this.upgrades[u.id] < 1) return false;
-      }
+      const has = UPGRADES[cat].some(u => (this.upgrades[u.id] || 0) > 0);
+      if (!has) return false;
     }
     this.allCategoriesMaxed = true;
     return true;
@@ -903,7 +940,8 @@ class Game {
 
     for (const u of upgrades) {
       const count = this.upgrades[u.id] || 0;
-      const cost = Math.floor(u.baseCost * Math.pow(1.15, count));
+      const discount = this.getAchievementReward('discount') - 1;
+      const cost = Math.max(1, Math.floor(u.baseCost * Math.pow(1.15, count) * (1 - discount)));
       const affordable = this.cycles >= cost;
       const hasAny = count > 0;
 
@@ -994,6 +1032,7 @@ class Game {
       prestigePoints: this.prestigePoints,
       multiplier: this.multiplier,
       upgrades: this.upgrades,
+      upgradesEverBought: this.upgradesEverBought,
       ticketsResolved: this.ticketsResolved,
       ticketsExpired: this.ticketsExpired,
       sev1Survived: this.sev1Survived,
@@ -1003,7 +1042,12 @@ class Game {
       fastTickets: this.fastTickets,
       maxSpendIn60s: this.maxSpendIn60s,
       allCategoriesMaxed: this.allCategoriesMaxed,
-      maxSimultaneousP1: this.maxSimultaneousP1
+      maxSimultaneousP1: this.maxSimultaneousP1,
+      mondayClicks: this.mondayClicks,
+      pagerDutyTriggered: this.pagerDutyTriggered,
+      pagerDutyDate: this.pagerDutyDate,
+      legacyCodeTriggered: this.legacyCodeTriggered,
+      sessionStart: this.sessionStart
     };
     localStorage.setItem('devopsClicker', JSON.stringify(data));
     this.toast('💾 Gespeichert!');
@@ -1021,6 +1065,7 @@ class Game {
       this.prestigePoints = data.prestigePoints || 0;
       this.multiplier = data.multiplier || 1;
       this.upgrades = data.upgrades || {};
+      this.upgradesEverBought = data.upgradesEverBought || false;
       this.ticketsResolved = data.ticketsResolved || 0;
       this.ticketsExpired = data.ticketsExpired || 0;
       this.sev1Survived = data.sev1Survived || false;
@@ -1031,6 +1076,13 @@ class Game {
       this.maxSpendIn60s = data.maxSpendIn60s || 0;
       this.allCategoriesMaxed = data.allCategoriesMaxed || false;
       this.maxSimultaneousP1 = data.maxSimultaneousP1 || 0;
+      this.mondayClicks = data.mondayClicks || 0;
+      this.pagerDutyTriggered = data.pagerDutyTriggered || false;
+      this.pagerDutyDate = data.pagerDutyDate || null;
+      this.legacyCodeTriggered = data.legacyCodeTriggered || false;
+      this.sessionStart = data.sessionStart || Date.now();
+      const startBonus = this.achievements.has('shadow_it') ? 50 : 0;
+      if (this.cycles < startBonus) this.cycles = startBonus;
       this.clickPower = this.calculateClickPower();
       this.toast('📂 Spielstand geladen!');
     } catch (e) {
@@ -1053,6 +1105,7 @@ class Game {
       prestigePoints: this.prestigePoints,
       multiplier: this.multiplier,
       upgrades: this.upgrades,
+      upgradesEverBought: this.upgradesEverBought,
       ticketsResolved: this.ticketsResolved,
       ticketsExpired: this.ticketsExpired,
       sev1Survived: this.sev1Survived,
@@ -1063,6 +1116,11 @@ class Game {
       maxSpendIn60s: this.maxSpendIn60s,
       allCategoriesMaxed: this.allCategoriesMaxed,
       maxSimultaneousP1: this.maxSimultaneousP1,
+      mondayClicks: this.mondayClicks,
+      pagerDutyTriggered: this.pagerDutyTriggered,
+      pagerDutyDate: this.pagerDutyDate,
+      legacyCodeTriggered: this.legacyCodeTriggered,
+      sessionStart: this.sessionStart,
       version: 2,
       exportedAt: new Date().toISOString()
     };
@@ -1096,6 +1154,7 @@ class Game {
         this.prestigePoints = data.prestigePoints || 0;
         this.multiplier = data.multiplier || 1;
         this.upgrades = data.upgrades || {};
+        this.upgradesEverBought = data.upgradesEverBought || false;
         this.ticketsResolved = data.ticketsResolved || 0;
         this.ticketsExpired = data.ticketsExpired || 0;
         this.sev1Survived = data.sev1Survived || false;
@@ -1106,6 +1165,13 @@ class Game {
         this.maxSpendIn60s = data.maxSpendIn60s || 0;
         this.allCategoriesMaxed = data.allCategoriesMaxed || false;
         this.maxSimultaneousP1 = data.maxSimultaneousP1 || 0;
+        this.mondayClicks = data.mondayClicks || 0;
+        this.pagerDutyTriggered = data.pagerDutyTriggered || false;
+        this.pagerDutyDate = data.pagerDutyDate || null;
+        this.legacyCodeTriggered = data.legacyCodeTriggered || false;
+        this.sessionStart = data.sessionStart || Date.now();
+        const startBonus = this.achievements.has('shadow_it') ? 50 : 0;
+        if (this.cycles < startBonus) this.cycles = startBonus;
         this.clickPower = this.calculateClickPower();
         this.save();
         this.toast('📥 Savegame importiert!');
@@ -1117,14 +1183,11 @@ class Game {
     reader.readAsText(file);
     input.value = '';
   }
-}
-
 
   renderAchievements() {
     const container = document.getElementById('upgradeList');
     container.innerHTML = '';
 
-    // Bonus summary header
     const summary = document.createElement('div');
     summary.className = 'bonus-summary';
     const bonuses = [
@@ -1149,13 +1212,11 @@ class Game {
     summary.innerHTML = bonusHtml;
     container.appendChild(summary);
 
-    // Header with count
     const header = document.createElement('div');
     header.className = 'achievements-header';
     header.innerHTML = `<span class="achievements-count">${this.achievements.size} / ${ACHIEVEMENTS.length} freigeschaltet</span><span class="achievements-bonus">${Math.round((this.getAchievementReward('cpsBonus') - 1) * 100)}% CPS Bonus</span>`;
     container.appendChild(header);
 
-    // Achievement cards
     for (const a of ACHIEVEMENTS) {
       const unlocked = this.achievements.has(a.id);
       const prog = this.getProgress(a);
@@ -1176,8 +1237,10 @@ class Game {
       container.appendChild(card);
     }
   }
+}
 
 const game = new Game();
+
 </script>
 </body>
 </html>
