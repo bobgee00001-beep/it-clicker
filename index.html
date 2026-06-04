@@ -299,6 +299,9 @@
     <div class="save-controls">
       <button class="save-btn" onclick="game.save()">💾 Speichern</button>
       <button class="save-btn" onclick="game.load()">📂 Laden</button>
+      <button class="save-btn" onclick="game.exportSave()">📤 Export</button>
+      <button class="save-btn" onclick="document.getElementById('importFile').click()">📥 Import</button>
+      <input type="file" id="importFile" style="display:none" accept=".json" onchange="game.importSave(this)">
       <button class="save-btn" onclick="game.reset()">🔄 Reset</button>
     </div>
   </div>
@@ -814,6 +817,66 @@ class Game {
     if (!confirm('Wirklich zurücksetzen? Alle Fortschritte verloren!')) return;
     localStorage.removeItem('devopsClicker');
     location.reload();
+  }
+
+  exportSave() {
+    const data = {
+      cycles: this.cycles,
+      totalClicks: this.totalClicks,
+      totalEarned: this.totalEarned,
+      prestige: this.prestige,
+      multiplier: this.multiplier,
+      upgrades: this.upgrades,
+      ticketsResolved: this.ticketsResolved,
+      ticketsExpired: this.ticketsExpired,
+      sev1Survived: this.sev1Survived,
+      achievements: Array.from(this.achievements),
+      version: 1,
+      exportedAt: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `devops-clicker-save-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    this.toast('📤 Export gespeichert!');
+  }
+
+  importSave(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (!data.version || !data.upgrades) {
+          throw new Error('Ungültige Savegame-Datei');
+        }
+        if (!confirm(`Savegame vom ${data.exportedAt?.slice(0,10)||'unbekannt'} importieren? Aktueller Fortschritt wird überschrieben.`)) return;
+        this.cycles = data.cycles || 0;
+        this.totalClicks = data.totalClicks || 0;
+        this.totalEarned = data.totalEarned || 0;
+        this.prestige = data.prestige || 0;
+        this.multiplier = data.multiplier || 1;
+        this.upgrades = data.upgrades || {};
+        this.ticketsResolved = data.ticketsResolved || 0;
+        this.ticketsExpired = data.ticketsExpired || 0;
+        this.sev1Survived = data.sev1Survived || false;
+        this.achievements = new Set(data.achievements || []);
+        this.clickPower = this.calculateClickPower();
+        this.save();
+        this.toast('📥 Savegame importiert!');
+        this.updateDisplay();
+      } catch (err) {
+        this.toast('❌ Fehler: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+    input.value = '';
   }
 }
 
