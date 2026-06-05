@@ -1335,6 +1335,33 @@ class Game {
 
 const game = new Game();
 
+// Console Easter Egg: Type 'devops' anywhere to reveal the secret
+(function() {
+  let buffer = '';
+  const secret = 'devops';
+  const message = `
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║   ☕ DEVOPS EASTER EGG UNLOCKED! ☕                            ║
+║                                                               ║
+║   "Behind every great server farm is an even greater          ║
+║    amount of coffee."                                         ║
+║                                                               ║
+║   Keep those servers humming and that coffee flowing!          ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+  `;
+  document.addEventListener('keydown', (e) => {
+    buffer += e.key.toLowerCase();
+    buffer = buffer.slice(-secret.length);
+    if (buffer === secret) {
+      console.log('%c' + message, 'color: #00ff41; font-family: monospace; font-size: 14px;');
+      game.toast('☕ Easter Egg unlocked! Check console!', 'warn');
+      buffer = '';
+    }
+  });
+})();
+
 </script>
 </body>
 </html>
