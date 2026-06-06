@@ -1,11 +1,21 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DevOps Clicker</title>
+<script>
+// Theme initialization — runs before CSS to prevent FOUC
+(function() {
+  const saved = localStorage.getItem('theme');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const theme = saved || (prefersDark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', theme);
+})();
+</script>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
+  /* Theme Variables */
   :root {
     --bg: #0a0a0a;
     --fg: #00ff41;
@@ -19,7 +29,43 @@
     --text: #e0e0e0;
     --text-dim: #888888;
   }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  [data-theme="light"] {
+    --bg: #f5f5f5;
+    --fg: #00aa33;
+    --fg-dim: #008822;
+    --fg-dark: #006622;
+    --accent: #00aa33;
+    --warn: #dd8800;
+    --danger: #dd2222;
+    --panel: #ffffff;
+    --panel-border: #d0d0d0;
+    --text: #1a1a2e;
+    --text-dim: #666666;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease; }
+  html, body { background: var(--bg); color: var(--text); }
+
+  /* Theme toggle button */
+  .theme-toggle {
+    background: transparent;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 1rem;
+    color: var(--text);
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .theme-toggle:hover {
+    border-color: var(--fg);
+    color: var(--fg);
+    transform: scale(1.05);
+  }
   body {
     font-family: 'JetBrains Mono', monospace;
     background: var(--bg);
@@ -103,14 +149,15 @@
     padding: 8px 10px;
     margin-bottom: 6px;
     border-radius: 6px;
-    background: #141414;
-    border: 1px solid #1a1a1a;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
     cursor: pointer;
     transition: border-color 0.2s, background 0.2s;
     opacity: 0.5;
   }
   .upgrade-item.affordable { opacity: 1; border-color: var(--fg-dark); }
-  .upgrade-item.affordable:hover { border-color: var(--fg); background: #1a1a1a; }
+  .upgrade-item.affordable:hover { border-color: var(--fg); background: rgba(0,255,65,0.05); }
+  [data-theme="light"] .upgrade-item.affordable:hover { background: rgba(0,170,51,0.05); }
   .upgrade-item.purchased { border-color: var(--fg); opacity: 1; }
   .upgrade-icon { font-size: 1.3rem; width: 28px; text-align: center; }
   .upgrade-info { flex: 1; min-width: 0; }
@@ -131,13 +178,14 @@
     border-radius: 4px;
     text-transform: uppercase;
   }
-  .shop-tab.active { border-color: var(--fg); color: var(--fg); background: #1a1a1a; }
+  .shop-tab.active { border-color: var(--fg); color: var(--fg); background: rgba(0,255,65,0.05); }
+  [data-theme="light"] .shop-tab.active { background: rgba(0,170,51,0.05); }
   .ticket-card {
     padding: 8px;
     margin-bottom: 6px;
     border-radius: 6px;
-    background: #141414;
-    border: 1px solid #1a1a1a;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
     cursor: pointer;
     transition: border-color 0.2s;
   }
@@ -170,6 +218,7 @@
     animation: pulse 2s infinite;
   }
   .prestige-btn.ready:hover { background: rgba(0,255,65,0.05); }
+  [data-theme="light"] .prestige-btn.ready:hover { background: rgba(0,170,51,0.05); }
   @keyframes pulse { 0%,100% { box-shadow: 0 0 5px rgba(0,255,65,0.2); } 50% { box-shadow: 0 0 15px rgba(0,255,65,0.4); } }
   .toast-container {
     position: fixed;
@@ -354,7 +403,11 @@
     <span class="resource-display" id="resourceDisplay">CPU Cycles: 0</span>
     <span class="cps-display" id="cpsDisplay">(+0/s)</span>
   </div>
-  <div class="header-right">
+  <div class="header-right" style="display: flex; align-items: center; gap: 16px;">
+    <button id="themeToggle" class="theme-toggle" onclick="game.toggleTheme()" title="Theme wechseln">
+      <span id="themeIcon">🌙</span>
+    </button>
+    <button id="muteBtn" class="save-btn" style="padding: 6px 12px;" onclick="game.toggleMute();">🔊</button>
     <span class="multiplier-display" id="multiplierDisplay">Multiplier: 1.00x</span>
   </div>
 </div>
@@ -458,6 +511,312 @@ const TICKET_TITLES = {
 const OFFLINE_PENALTY = 0.5;
 const MAX_OFFLINE_SECONDS = 86400;
 
+const SOUND_THEMES = {
+  dialup: {
+    id: 'dialup',
+    name: 'Dial-Up Era',
+    unlockAt: 1,
+    description: '56k Modem-Noise beim Klicken',
+    generator: (ctx, type = 'click') => generateDialupSound(ctx, type)
+  },
+  mechanical: {
+    id: 'mechanical',
+    name: 'Mechanical Keys',
+    unlockAt: 3,
+    description: 'Cherry MX Blue Klick-Sounds',
+    generator: (ctx, type = 'click') => generateMechanicalSound(ctx, type)
+  },
+  retro: {
+    id: 'retro',
+    name: '8-Bit Arcade',
+    unlockAt: 5,
+    description: 'Retro Game-Blips',
+    generator: (ctx, type = 'click', pitch = 'mid') => generateRetroSound(ctx, type, pitch)
+  },
+  scifi: {
+    id: 'scifi',
+    name: 'Sci-Fi UI',
+    unlockAt: 10,
+    description: 'Glassy/Holographic Interface Sounds',
+    generator: (ctx, type = 'click') => generateSciFiSound(ctx, type)
+  }
+};
+
+function generateDialupSound(ctx, type) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  const filter = ctx.createBiquadFilter();
+  
+  osc.connect(filter);
+  filter.connect(gain);
+  gain.connect(ctx.destination);
+  
+  if (type === 'click') {
+    osc.frequency.setValueAtTime(800, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.15);
+    osc.type = 'sawtooth';
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(2000, ctx.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.15);
+  } else if (type === 'purchase') {
+    const noise = ctx.createOscillator();
+    const noiseGain = ctx.createGain();
+    noise.type = 'square';
+    noise.frequency.setValueAtTime(600, ctx.currentTime);
+    noise.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.08);
+    noiseGain.gain.setValueAtTime(0.1, ctx.currentTime);
+    noiseGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+    noise.connect(noiseGain);
+    noiseGain.connect(ctx.destination);
+    noise.start(ctx.currentTime);
+    noise.stop(ctx.currentTime + 0.1);
+  } else if (type === 'achievement') {
+    osc.frequency.setValueAtTime(400, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.3);
+    osc.type = 'sawtooth';
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.4);
+  } else if (type === 'prestige') {
+    for (let i = 0; i < 5; i++) {
+      const ping = ctx.createOscillator();
+      const pingGain = ctx.createGain();
+      ping.type = 'sine';
+      ping.frequency.setValueAtTime(600 + i * 200, ctx.currentTime + i * 0.1);
+      pingGain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.1);
+      pingGain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + i * 0.1 + 0.2);
+      ping.connect(pingGain);
+      pingGain.connect(ctx.destination);
+      ping.start(ctx.currentTime + i * 0.1);
+      ping.stop(ctx.currentTime + i * 0.1 + 0.2);
+    }
+  } else if (type === 'ticket') {
+    osc.frequency.setValueAtTime(1000, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.08);
+    osc.type = 'sawtooth';
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.1);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.1);
+  }
+}
+
+function generateMechanicalSound(ctx, type) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  
+  if (type === 'click') {
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(200, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.05);
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.08);
+    const click = ctx.createOscillator();
+    const clickGain = ctx.createGain();
+    click.type = 'triangle';
+    click.frequency.setValueAtTime(1000, ctx.currentTime);
+    clickGain.gain.setValueAtTime(0.15, ctx.currentTime);
+    clickGain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.03);
+    click.connect(clickGain);
+    clickGain.connect(ctx.destination);
+    click.start(ctx.currentTime);
+    click.stop(ctx.currentTime + 0.03);
+  } else if (type === 'purchase') {
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(300, ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(400, ctx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.15);
+  } else if (type === 'achievement') {
+    for (let i = 0; i < 3; i++) {
+      const note = ctx.createOscillator();
+      const noteGain = ctx.createGain();
+      note.type = 'square';
+      note.frequency.setValueAtTime(350 + i * 150, ctx.currentTime + i * 0.08);
+      noteGain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.08);
+      noteGain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + i * 0.08 + 0.1);
+      note.connect(noteGain);
+      noteGain.connect(ctx.destination);
+      note.start(ctx.currentTime + i * 0.08);
+      note.stop(ctx.currentTime + i * 0.08 + 0.1);
+    }
+  } else if (type === 'prestige') {
+    for (let i = 0; i < 8; i++) {
+      const note = ctx.createOscillator();
+      const noteGain = ctx.createGain();
+      note.type = 'square';
+      note.frequency.setValueAtTime(400 + i * 100, ctx.currentTime + i * 0.06);
+      noteGain.gain.setValueAtTime(0.18, ctx.currentTime + i * 0.06);
+      noteGain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + i * 0.06 + 0.08);
+      note.connect(noteGain);
+      noteGain.connect(ctx.destination);
+      note.start(ctx.currentTime + i * 0.06);
+      note.stop(ctx.currentTime + i * 0.06 + 0.08);
+    }
+  } else if (type === 'ticket') {
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(500, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.05);
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.06);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.06);
+  }
+}
+
+function generateRetroSound(ctx, type, pitch = 'mid') {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  
+  const pitchMap = { low: 200, mid: 440, high: 880, veryhigh: 1760 };
+  const baseFreq = pitchMap[pitch] || pitchMap.mid;
+  
+  if (type === 'click') {
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(baseFreq, ctx.currentTime);
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.08);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.08);
+  } else if (type === 'purchase') {
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(baseFreq * 1.5, ctx.currentTime);
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.1);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.1);
+  } else if (type === 'achievement') {
+    const notes = [baseFreq, baseFreq * 1.5, baseFreq * 2];
+    notes.forEach((f, i) => {
+      const note = ctx.createOscillator();
+      const noteGain = ctx.createGain();
+      note.type = 'square';
+      note.frequency.setValueAtTime(f, ctx.currentTime + i * 0.12);
+      noteGain.gain.setValueAtTime(0.2, ctx.currentTime + i * 0.12);
+      noteGain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + i * 0.12 + 0.15);
+      note.connect(noteGain);
+      noteGain.connect(ctx.destination);
+      note.start(ctx.currentTime + i * 0.12);
+      note.stop(ctx.currentTime + i * 0.12 + 0.15);
+    });
+  } else if (type === 'prestige') {
+    const arpeggio = [baseFreq, baseFreq * 1.25, baseFreq * 1.5, baseFreq * 2, baseFreq * 2.5, baseFreq * 3];
+    arpeggio.forEach((f, i) => {
+      const note = ctx.createOscillator();
+      const noteGain = ctx.createGain();
+      note.type = 'square';
+      note.frequency.setValueAtTime(f, ctx.currentTime + i * 0.08);
+      noteGain.gain.setValueAtTime(0.2, ctx.currentTime + i * 0.08);
+      noteGain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + i * 0.08 + 0.1);
+      note.connect(noteGain);
+      noteGain.connect(ctx.destination);
+      note.start(ctx.currentTime + i * 0.08);
+      note.stop(ctx.currentTime + i * 0.08 + 0.1);
+    });
+  } else if (type === 'ticket') {
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(baseFreq * 0.75, ctx.currentTime);
+    gain.gain.setValueAtTime(0.18, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.1);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.1);
+  }
+}
+
+function generateSciFiSound(ctx, type) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  const filter = ctx.createBiquadFilter();
+  
+  osc.connect(filter);
+  filter.connect(gain);
+  gain.connect(ctx.destination);
+  
+  filter.type = 'lowpass';
+  filter.Q.value = 5;
+  
+  if (type === 'click') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, ctx.currentTime);
+    filter.frequency.setValueAtTime(2000, ctx.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(6000, ctx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.15);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.15);
+  } else if (type === 'purchase') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1200, ctx.currentTime);
+    filter.frequency.setValueAtTime(1200, ctx.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(8000, ctx.currentTime + 0.2);
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.25);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.25);
+  } else if (type === 'achievement') {
+    osc.type = 'sine';
+    filter.frequency.setValueAtTime(300, ctx.currentTime);
+    osc.frequency.setValueAtTime(300, ctx.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(8000, ctx.currentTime + 0.5);
+    osc.frequency.linearRampToValueAtTime(800, ctx.currentTime + 0.5);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.6);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.6);
+  } else if (type === 'prestige') {
+    const layers = [200, 400, 600, 800];
+    layers.forEach((f, i) => {
+      const layer = ctx.createOscillator();
+      const layerGain = ctx.createGain();
+      const layerFilter = ctx.createBiquadFilter();
+      
+      layer.type = 'sine';
+      layer.connect(layerFilter);
+      layerFilter.connect(layerGain);
+      layerGain.connect(ctx.destination);
+      
+      layerFilter.type = 'lowpass';
+      layerFilter.Q.value = 10;
+      layerFilter.frequency.setValueAtTime(f, ctx.currentTime + i * 0.1);
+      layerFilter.frequency.exponentialRampToValueAtTime(f * 10, ctx.currentTime + i * 0.1 + 0.8);
+      layer.frequency.setValueAtTime(f, ctx.currentTime + i * 0.1);
+      layerGain.gain.setValueAtTime(0, ctx.currentTime + i * 0.1);
+      layerGain.gain.linearRampToValueAtTime(0.15, ctx.currentTime + i * 0.1 + 0.2);
+      layerGain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + i * 0.1 + 0.9);
+      layer.start(ctx.currentTime + i * 0.1);
+      layer.stop(ctx.currentTime + i * 0.1 + 0.9);
+    });
+  } else if (type === 'ticket') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, ctx.currentTime);
+    filter.frequency.setValueAtTime(1000, ctx.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(4000, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.15);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.15);
+  }
+}
+
 const ACHIEVEMENTS = [
   { id: 'first_click', name: 'Erster Klick', desc: 'Klicke zum ersten Mal', check: g => g.totalClicks >= 1, reward: { type: 'clickBonus', value: 0.01 }, rewardDesc: '+1% Click Power' },
   { id: 'hundred', name: 'Centurion', desc: '100 Cycles gesammelt', check: g => g.totalEarned >= 100, reward: { type: 'cpsBonus', value: 0.02 }, rewardDesc: '+2% CPS' },
@@ -524,8 +883,17 @@ class Game {
     this.sessionStart = Date.now();
     this.lastOnline = 0;
     this.currentTab = 'hardware';
-    this.tabs = ['hardware', 'cloud', 'ai', 'click', 'itsm', 'achievements'];
-    this.tabNames = { hardware: 'Hardware', cloud: 'Cloud', ai: 'AI/Quantum', click: 'Click', itsm: 'ITSM', achievements: '🏆 Erfolge' };
+    this.tabs = ['hardware', 'cloud', 'ai', 'click', 'itsm', 'achievements', 'audio'];
+    this.tabNames = { hardware: 'Hardware', cloud: 'Cloud', ai: 'AI/Quantum', click: 'Click', itsm: 'ITSM', achievements: '🏆 Erfolge', audio: '🔊 Audio' };
+    
+    // Audio system
+    this.audioContext = null;
+    this.masterVolume = 1.0;
+    this.muted = false;
+    this.unlockedSounds = [];
+    this.selectedSound = 'none';
+    this.audioInitialized = false;
+    
     this.init();
   }
 
@@ -541,11 +909,117 @@ class Game {
 
   setupUI() {
     const btn = document.getElementById('clickBtn');
-    btn.addEventListener('click', (e) => this.click(e));
-    btn.addEventListener('touchstart', (e) => { e.preventDefault(); this.click(e); });
+    btn.addEventListener('click', (e) => {
+      this.initAudio();
+      this.click(e);
+    });
+    btn.addEventListener('touchstart', (e) => { 
+      e.preventDefault(); 
+      this.initAudio();
+      this.click(e); 
+    });
+    this.updateThemeIcon();
     this.renderTabs();
     this.renderUpgrades();
     this.renderTickets();
+  }
+
+  initAudio() {
+    if (this.audioInitialized) return;
+    try {
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      this.audioInitialized = true;
+      this.updateUnlockedSounds();
+    } catch (e) {
+      console.log('Web Audio API not supported');
+    }
+  }
+
+  updateUnlockedSounds() {
+    // Reset unlocked sounds based on current prestige
+    this.unlockedSounds = ['none'];
+    for (const [key, theme] of Object.entries(SOUND_THEMES)) {
+      if (this.prestige >= theme.unlockAt) {
+        this.unlockedSounds.push(key);
+      }
+    }
+    // If current selection is no longer valid, fall back to none
+    if (!this.unlockedSounds.includes(this.selectedSound)) {
+      this.selectedSound = 'none';
+    }
+  }
+
+  playSound(type, pitch = 'mid') {
+    if (!this.audioContext || this.muted || this.selectedSound === 'none') return;
+    if (this.audioContext.state === 'suspended') {
+      this.audioContext.resume();
+    }
+    
+    const theme = SOUND_THEMES[this.selectedSound];
+    if (!theme) return;
+    
+    // Apply master volume
+    const originalDestination = this.audioContext.destination;
+    
+    try {
+      // Create master gain node
+      const masterGain = this.audioContext.createGain();
+      masterGain.gain.setValueAtTime(this.masterVolume, this.audioContext.currentTime);
+      masterGain.connect(this.audioContext.destination);
+      
+      // Temporarily redirect to master gain
+      const ctx = Object.create(this.audioContext);
+      Object.defineProperty(ctx, 'destination', {
+        get: () => masterGain
+      });
+      
+      theme.generator(ctx, type, pitch);
+    } catch (e) {
+      // Fallback if redirection doesn't work
+      theme.generator(this.audioContext, type, pitch);
+    }
+  }
+
+  toggleMute() {
+    this.muted = !this.muted;
+    this.initAudio();
+    const btn = document.getElementById('muteBtn');
+    if (btn) {
+      btn.textContent = this.muted ? '🔇' : '🔊';
+    }
+    this.toast(this.muted ? '🔇 Muted' : '🔊 Unmuted');
+  }
+
+  toggleTheme() {
+    const html = document.documentElement;
+    const current = html.getAttribute('data-theme') || 'dark';
+    const next = current === 'dark' ? 'light' : 'dark';
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    this.updateThemeIcon();
+    this.toast(next === 'dark' ? '🌙 Dark Mode aktiviert' : '☀️ Light Mode aktiviert');
+  }
+
+  updateThemeIcon() {
+    const icon = document.getElementById('themeIcon');
+    const html = document.documentElement;
+    const theme = html.getAttribute('data-theme') || 'dark';
+    if (icon) icon.textContent = theme === 'dark' ? '🌙' : '☀️';
+  }
+
+  setVolume(val) {
+    this.masterVolume = parseFloat(val) / 100;
+    this.renderAudioTab();
+  }
+
+  selectSound(soundId) {
+    if (!this.unlockedSounds.includes(soundId)) return;
+    this.selectedSound = soundId;
+    this.renderAudioTab();
+    // Play a demo sound
+    if (soundId !== 'none') {
+      this.playSound('click');
+    }
   }
 
   setupOfflineTracking() {
@@ -644,6 +1118,7 @@ class Game {
     const now = new Date();
     if (now.getDay() === 1 && now.getHours() === 9) this.mondayClicks++;
     this.showClickEffect(e, gain);
+    this.playSound('click');
     this.checkAchievements();
     this.updateDisplay();
   }
@@ -839,6 +1314,11 @@ class Game {
     this.totalEarned += gain;
     this.ticketsResolved++;
     this.tickets.splice(index, 1);
+    
+    // Play ticket sound
+    this.initAudio();
+    this.playSound('ticket', t.type === 'p1' ? 'high' : t.type === 'p2' ? 'mid' : 'low');
+    
     if (!auto) this.toast(`Ticket gelöst: +${this.fmt(gain)} Cycles`);
     this.renderTickets();
     this.checkAchievements();
@@ -877,6 +1357,10 @@ class Game {
     this.upgradesEverBought = true;
     this.updateSpendTracking(cost);
 
+    // Play purchase sound
+    this.initAudio();
+    this.playSound('purchase');
+
     if (u.baseCps || u.clickBonus) {
       this.toast(`${u.name} gekauft!`);
     } else {
@@ -906,6 +1390,11 @@ class Game {
     const bonusPoint = this.legacyCodeTriggered && !this.achievements.has('legacy_code') ? 1 : 0;
     this.prestigePoints += newPoints + bonusPoint;
     this.prestige++;
+    
+    // Play prestige sound
+    this.initAudio();
+    this.playSound('prestige');
+    
     this.multiplier = 1 + (this.prestigePoints * 0.1);
     this.cycles = 0;
     this.upgrades = {};
@@ -923,6 +1412,9 @@ class Game {
     this.closePrestigeModal();
     this.toast(`IPO #${this.prestige}! +${newPoints + bonusPoint} Prestige-Punkte — ${this.multiplier.toFixed(2)}x Multiplier`);
     this.checkAchievements();
+    
+    // Update unlocked sounds
+    this.updateUnlockedSounds();
   }
 
   closePrestigeModal() {
@@ -945,6 +1437,9 @@ class Game {
       this.achievementProgress[a.id] = progress.current;
       if (a.check(this)) {
         this.achievements.add(a.id);
+        // Play achievement sound
+        this.initAudio();
+        this.playSound('achievement');
         this.toast(`🏆 ${a.name}: ${a.desc} — ${a.rewardDesc}`, 'warn');
         this.renderAchievements();
         this.updateDisplay();
@@ -1011,6 +1506,133 @@ class Game {
     setTimeout(() => el.remove(), 3000);
   }
 
+  renderAudioTab() {
+    const container = document.getElementById('upgradeList');
+    container.innerHTML = '';
+    
+    // Update unlocked sounds based on current prestige
+    this.updateUnlockedSounds();
+    
+    // Header
+    const header = document.createElement('div');
+    header.className = 'bonus-summary';
+    header.innerHTML = '<div class="bonus-summary-title">🔊 Audio-Einstellungen</div><div class="bonus-summary-item">Wähle deinen Sound-Theme (Freigeschaltet durch Prestige)</div>';
+    container.appendChild(header);
+    
+    // Master controls
+    const controls = document.createElement('div');
+    controls.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding: 12px; border: 1px solid var(--panel-border); border-radius: 8px; margin-bottom: 16px;';
+    
+    // Mute button
+    const muteBtn = document.createElement('button');
+    muteBtn.className = 'save-btn';
+    muteBtn.style.cssText = 'width: 100%; padding: 10px; font-size: 0.85rem;';
+    muteBtn.textContent = this.muted ? '🔇 Ton ein' : '🔊 Ton aus';
+    muteBtn.onclick = () => {
+      this.initAudio();
+      this.toggleMute();
+      this.renderAudioTab();
+    };
+    controls.appendChild(muteBtn);
+    
+    // Volume slider
+    const volumeRow = document.createElement('div');
+    volumeRow.style.cssText = 'display: flex; align-items: center; gap: 12px;';
+    const volumeLabel = document.createElement('span');
+    volumeLabel.style.cssText = 'font-size: 0.8rem; color: var(--text-dim); min-width: 60px;';
+    volumeLabel.textContent = 'Lautstärke';
+    const sliderContainer = document.createElement('div');
+    sliderContainer.style.cssText = 'flex: 1; display: flex; align-items: center; gap: 8px;';
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = '100';
+    slider.value = Math.floor(this.masterVolume * 100);
+    slider.style.cssText = 'flex: 1; height: 6px; -webkit-appearance: none; background: #1a1a1a; border-radius: 3px; outline: none;';
+    slider.oninput = (e) => {
+      this.initAudio();
+      this.setVolume(e.target.value);
+    };
+    const volumeValue = document.createElement('span');
+    volumeValue.style.cssText = 'font-size: 0.8rem; color: var(--fg); min-width: 40px; text-align: right;';
+    volumeValue.textContent = Math.floor(this.masterVolume * 100) + '%';
+    sliderContainer.appendChild(slider);
+    sliderContainer.appendChild(volumeValue);
+    volumeRow.appendChild(volumeLabel);
+    volumeRow.appendChild(sliderContainer);
+    controls.appendChild(volumeRow);
+    
+    container.appendChild(controls);
+    
+    // Sound themes list
+    const soundHeader = document.createElement('div');
+    soundHeader.className = 'achievements-header';
+    soundHeader.innerHTML = `<span class="achievements-count">Sound-Themes</span><span class="achievements-bonus">${this.unlockedSounds.length - 1} / ${Object.keys(SOUND_THEMES).length} freigeschaltet</span>`;
+    container.appendChild(soundHeader);
+    
+    // None option
+    this.renderSoundCard(container, {
+      id: 'none',
+      name: 'Stille',
+      description: 'Keine Sounds (default)',
+      unlockAt: 0
+    });
+    
+    // Sound themes
+    for (const [key, theme] of Object.entries(SOUND_THEMES)) {
+      this.renderSoundCard(container, theme);
+    }
+  }
+
+  renderSoundCard(container, theme) {
+    const isLocked = !this.unlockedSounds.includes(theme.id);
+    const isSelected = this.selectedSound === theme.id;
+    
+    const card = document.createElement('div');
+    card.className = 'achievement-card' + 
+      (isSelected ? ' unlocked' : '') + 
+      (isLocked ? ' locked' : '');
+    card.style.cssText = 'margin-bottom: 10px; cursor: pointer; position: relative;';
+    
+    const lockedText = isLocked ? `🔒 Frei ab Prestige ${theme.unlockAt}` : '';
+    const selectedText = isSelected ? '✓ Aktiv' : '';
+    
+    card.innerHTML = `
+      <div class="achievement-top">
+        <span class="achievement-name">${theme.name}</span>
+        <span class="achievement-reward">${selectedText || lockedText}</span>
+      </div>
+      <div class="achievement-desc">${theme.description}</div>
+    `;
+    
+    card.onclick = () => {
+      if (isLocked) {
+        this.toast(`🔒 Freigeschaltet bei Prestige ${theme.unlockAt}`, 'warn');
+        return;
+      }
+      this.initAudio();
+      this.selectSound(theme.id);
+    };
+    
+    // Play button for unlocked themes
+    if (!isLocked && theme.id !== 'none') {
+      const playBtn = document.createElement('button');
+      playBtn.className = 'save-btn';
+      playBtn.style.cssText = 'position: absolute; right: 12px; top: 50%; transform: translateY(-50%); padding: 6px 12px; font-size: 0.75rem;';
+      playBtn.textContent = '▶ Test';
+      playBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.initAudio();
+        this.selectedSound = theme.id;
+        this.playSound('click');
+        this.selectedSound = this.unlockedSounds.includes(this.selectedSound) ? this.selectedSound : 'none';
+      };
+      card.appendChild(playBtn);
+    }
+    
+    container.appendChild(card);
+  }
+
   renderTabs() {
     const container = document.getElementById('shopTabs');
     container.innerHTML = '';
@@ -1018,7 +1640,13 @@ class Game {
       const btn = document.createElement('button');
       btn.className = 'shop-tab' + (tab === this.currentTab ? ' active' : '');
       btn.textContent = this.tabNames[tab];
-      btn.onclick = () => { this.currentTab = tab; this.renderTabs(); if (tab === 'achievements') this.renderAchievements(); else this.renderUpgrades(); };
+      btn.onclick = () => { 
+        this.currentTab = tab; 
+        this.renderTabs(); 
+        if (tab === 'achievements') this.renderAchievements(); 
+        else if (tab === 'audio') this.renderAudioTab();
+        else this.renderUpgrades(); 
+      };
       container.appendChild(btn);
     }
   }
@@ -1139,7 +1767,11 @@ class Game {
       pagerDutyDate: this.pagerDutyDate,
       legacyCodeTriggered: this.legacyCodeTriggered,
       sessionStart: this.sessionStart,
-      lastOnline: Date.now()
+      lastOnline: Date.now(),
+      // Audio settings
+      masterVolume: this.masterVolume,
+      muted: this.muted,
+      selectedSound: this.selectedSound
     };
     localStorage.setItem('devopsClicker', JSON.stringify(data));
     this.toast('💾 Gespeichert!');
@@ -1174,6 +1806,11 @@ class Game {
       this.legacyCodeTriggered = data.legacyCodeTriggered || false;
       this.sessionStart = data.sessionStart || Date.now();
       this.lastOnline = data.lastOnline || 0;
+      // Load audio settings
+      this.masterVolume = data.masterVolume ?? 1.0;
+      this.muted = data.muted ?? false;
+      this.selectedSound = data.selectedSound || 'none';
+      this.updateUnlockedSounds();
       const startBonus = this.achievements.has('shadow_it') ? 50 : 0;
       if (this.cycles < startBonus) this.cycles = startBonus;
       this.clickPower = this.calculateClickPower();
@@ -1214,6 +1851,10 @@ class Game {
       pagerDutyDate: this.pagerDutyDate,
       legacyCodeTriggered: this.legacyCodeTriggered,
       sessionStart: this.sessionStart,
+      // Audio settings
+      masterVolume: this.masterVolume,
+      muted: this.muted,
+      selectedSound: this.selectedSound,
       version: 2,
       exportedAt: new Date().toISOString()
     };
@@ -1264,6 +1905,11 @@ class Game {
         this.legacyCodeTriggered = data.legacyCodeTriggered || false;
         this.sessionStart = data.sessionStart || Date.now();
         this.lastOnline = data.lastOnline || 0;
+        // Load audio settings
+        this.masterVolume = data.masterVolume ?? 1.0;
+        this.muted = data.muted ?? false;
+        this.selectedSound = data.selectedSound || 'none';
+        this.updateUnlockedSounds();
         const startBonus = this.achievements.has('shadow_it') ? 50 : 0;
         if (this.cycles < startBonus) this.cycles = startBonus;
         this.clickPower = this.calculateClickPower();
