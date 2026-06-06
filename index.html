@@ -106,18 +106,20 @@
     width: 180px; height: 180px;
     border-radius: 50%;
     border: 3px solid var(--fg);
-    background: radial-gradient(circle at 30% 30%, #1a1a1a, #0a0a0a);
+    background: radial-gradient(circle at 30% 30%, var(--panel), var(--bg));
     color: var(--fg);
     font-family: inherit;
     font-size: 1rem;
     font-weight: 700;
     cursor: pointer;
-    transition: transform 0.05s, box-shadow 0.2s;
+    transition: transform 0.05s, box-shadow 0.2s, background 0.2s;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
     user-select: none;
     box-shadow: 0 0 20px rgba(0,255,65,0.15);
   }
+  [data-theme="light"] .click-btn { box-shadow: 0 0 20px rgba(0,170,51,0.15); }
   .click-btn:hover { box-shadow: 0 0 30px rgba(0,255,65,0.25); }
+  [data-theme="light"] .click-btn:hover { box-shadow: 0 0 30px rgba(0,170,51,0.25); }
   .click-btn:active { transform: scale(0.92); }
   .click-btn .icon { font-size: 2.5rem; }
   .click-effect {
@@ -171,7 +173,7 @@
     padding: 6px;
     font-family: inherit;
     font-size: 0.7rem;
-    background: #141414;
+    background: var(--panel);
     border: 1px solid var(--panel-border);
     color: var(--text-dim);
     cursor: pointer;
@@ -193,8 +195,11 @@
   .ticket-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
   .ticket-type { font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 3px; }
   .ticket-p3 { color: #00ff41; background: rgba(0,255,65,0.1); }
+  [data-theme="light"] .ticket-p3 { color: #007722; background: rgba(0,170,51,0.15); }
   .ticket-p2 { color: #ffaa00; background: rgba(255,170,0,0.1); }
+  [data-theme="light"] .ticket-p2 { color: #aa6600; background: rgba(255,170,0,0.15); }
   .ticket-p1 { color: #ff3333; background: rgba(255,51,51,0.1); }
+  [data-theme="light"] .ticket-p1 { color: #aa0000; background: rgba(255,51,51,0.15); }
   .ticket-title { font-size: 0.75rem; color: var(--text); }
   .ticket-sla { font-size: 0.65rem; color: var(--text-dim); }
   .ticket-reward { font-size: 0.7rem; color: var(--fg); }
@@ -219,7 +224,14 @@
   }
   .prestige-btn.ready:hover { background: rgba(0,255,65,0.05); }
   [data-theme="light"] .prestige-btn.ready:hover { background: rgba(0,170,51,0.05); }
-  @keyframes pulse { 0%,100% { box-shadow: 0 0 5px rgba(0,255,65,0.2); } 50% { box-shadow: 0 0 15px rgba(0,255,65,0.4); } }
+  @keyframes pulse { 
+    0%,100% { box-shadow: 0 0 5px rgba(0,255,65,0.2); } 
+    50% { box-shadow: 0 0 15px rgba(0,255,65,0.4); } 
+  }
+  [data-theme="light"] @keyframes pulse { 
+    0%,100% { box-shadow: 0 0 5px rgba(0,170,51,0.2); } 
+    50% { box-shadow: 0 0 15px rgba(0,170,51,0.4); } 
+  }
   .toast-container {
     position: fixed;
     bottom: 20px;
@@ -232,7 +244,7 @@
     pointer-events: none;
   }
   .toast {
-    background: #1a1a1a;
+    background: var(--panel);
     border: 1px solid var(--fg);
     color: var(--fg);
     padding: 8px 16px;
@@ -285,7 +297,7 @@
     padding: 6px;
     font-family: inherit;
     font-size: 0.7rem;
-    background: #141414;
+    background: var(--panel);
     border: 1px solid var(--panel-border);
     color: var(--text-dim);
     cursor: pointer;
@@ -321,6 +333,9 @@
     width: 90%;
     box-shadow: 0 0 30px rgba(0,255,65,0.2);
   }
+  [data-theme="light"] .modal-box {
+    box-shadow: 0 0 30px rgba(0,170,51,0.2);
+  }
   .modal-title {
     font-size: 1.1rem;
     font-weight: 700;
@@ -349,16 +364,19 @@
     border: 1px solid var(--panel-border);
     border-radius: 6px;
     cursor: pointer;
-    background: #141414;
+    background: var(--panel);
     color: var(--text);
   }
-  .modal-btn:hover { border-color: var(--fg); color: var(--fg); }
+  .modal-btn:hover { border-color: var(--fg); color: var(--fg); background: var(--panel); }
+  [data-theme="light"] .modal-btn:hover { background: var(--panel); }
   .modal-btn.primary {
     border-color: var(--fg);
     color: var(--fg);
     background: rgba(0,255,65,0.05);
   }
+  [data-theme="light"] .modal-btn.primary { background: rgba(0,170,51,0.05); }
   .modal-btn.primary:hover { background: rgba(0,255,65,0.1); }
+  [data-theme="light"] .modal-btn.primary:hover { background: rgba(0,170,51,0.1); }
   @media (max-width: 900px) {
     .main { flex-direction: column; }
     .left-panel, .right-panel { width: 100%; min-width: auto; }
@@ -372,15 +390,17 @@
     flex-direction: column; gap: 6px; }
   .achievement-card:hover { border-color: var(--fg-dark); }
   .achievement-card.unlocked { border-color: var(--fg); background: rgba(0,255,65,0.05); }
+  [data-theme="light"] .achievement-card.unlocked { background: rgba(0,170,51,0.05); }
   .achievement-card.locked { opacity: 0.55; }
   .achievement-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .achievement-name { font-weight: 700; font-size: 0.9rem; color: var(--text); }
   .achievement-card.unlocked .achievement-name { color: var(--fg); }
   .achievement-reward { font-size: 0.75rem; color: var(--fg); background: rgba(0,255,65,0.1);
     padding: 2px 8px; border-radius: 12px; white-space: nowrap; }
+  [data-theme="light"] .achievement-reward { background: rgba(0,170,51,0.15); }
   .achievement-desc { font-size: 0.8rem; color: var(--text-dim); line-height: 1.2; }
   .achievement-progress { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
-  .achievement-progress-bar { flex: 1; height: 6px; background: #1a1a1a; border-radius: 3px;
+  .achievement-progress-bar { flex: 1; height: 6px; background: var(--panel); border-radius: 3px;
     overflow: hidden; }
   .achievement-progress-fill { height: 100%; background: var(--warn); border-radius: 3px;
     transition: width 0.3s; }
@@ -389,6 +409,7 @@
     text-align: right; }
   .bonus-summary { border: 1px dashed var(--fg-dark); border-radius: 8px;
     padding: 10px 12px; margin-bottom: 12px; background: rgba(0,255,65,0.03); }
+  [data-theme="light"] .bonus-summary { background: rgba(0,170,51,0.03); }
   .bonus-summary-title { font-weight: 700; font-size: 0.85rem; color: var(--fg); margin-bottom: 4px; }
   .bonus-summary-item { font-size: 0.8rem; color: var(--fg-dim); }
 </style>
