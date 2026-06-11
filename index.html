@@ -412,6 +412,27 @@
   [data-theme="light"] .bonus-summary { background: rgba(0,170,51,0.03); }
   .bonus-summary-title { font-weight: 700; font-size: 0.85rem; color: var(--fg); margin-bottom: 4px; }
   .bonus-summary-item { font-size: 0.8rem; color: var(--fg-dim); }
+
+  .release-panel { width: min(520px, 100%); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px; background: var(--panel); }
+  .release-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .release-title { font-weight: 700; color: var(--fg); font-size: 0.9rem; }
+  .release-status { font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.02em; }
+  .release-track { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
+  .release-step { border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px 4px; text-align: center; font-size: 0.68rem; color: var(--text-dim); min-height: 34px; display: flex; align-items: center; justify-content: center; }
+  .release-step.active { border-color: var(--warn); color: var(--warn); background: rgba(255,170,0,0.08); }
+  .release-step.done { border-color: var(--fg); color: var(--fg); background: rgba(0,255,65,0.05); }
+  .release-step.failed { border-color: var(--danger); color: var(--danger); background: rgba(255,51,51,0.08); }
+  [data-theme="light"] .release-step.done { background: rgba(0,170,51,0.05); }
+  .release-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
+  .release-metric { border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px; min-width: 0; }
+  .release-metric .label { display: block; color: var(--text-dim); font-size: 0.62rem; }
+  .release-metric .value { display: block; color: var(--text); font-size: 0.78rem; font-weight: 700; margin-top: 2px; }
+  .release-action { width: 100%; margin-top: 8px; }
+  .release-note { margin-top: 6px; min-height: 16px; color: var(--text-dim); font-size: 0.7rem; line-height: 1.25; }
+  .release-note.warn { color: var(--warn); }
+  .release-note.good { color: var(--fg); }
+  .release-note.danger { color: var(--danger); }
+
 </style>
 </head>
 <body>
@@ -453,6 +474,21 @@
     <div class="stats-row">
       <span>Pro Klick: <span id="clickPower">1</span></span>
       <span>Prestige: <span id="prestigeLevel">0</span></span>
+    </div>
+
+    <div class="release-panel" id="releasePanel">
+      <div class="release-header">
+        <span class="release-title">Release Train</span>
+        <span class="release-status" id="releaseStatusText">Idle</span>
+      </div>
+      <div class="release-track" id="releaseTrack"></div>
+      <div class="release-meta">
+        <div class="release-metric"><span class="label">Risiko</span><span class="value" id="releaseRisk">0%</span></div>
+        <div class="release-metric"><span class="label">Erfolge</span><span class="value" id="releaseSuccesses">0</span></div>
+        <div class="release-metric"><span class="label">Bonus</span><span class="value" id="releaseBonus">0s</span></div>
+      </div>
+      <button class="save-btn release-action" id="deployBtn" onclick="game.startDeploy()">Deploy starten</button>
+      <div class="release-note" id="releaseNote">Change Window bereit.</div>
     </div>
     <div class="save-controls">
       <button class="save-btn" onclick="game.save()">💾 Speichern</button>
@@ -838,6 +874,13 @@ function generateSciFiSound(ctx, type) {
   }
 }
 
+const RELEASE_STAGES = [
+  { id: 'building', label: 'Build' },
+  { id: 'testing', label: 'Tests' },
+  { id: 'security', label: 'Security' },
+  { id: 'deploying', label: 'Deploy' },
+];
+
 const ACHIEVEMENTS = [
   { id: 'first_click', name: 'Erster Klick', desc: 'Klicke zum ersten Mal', check: g => g.totalClicks >= 1, reward: { type: 'clickBonus', value: 0.01 }, rewardDesc: '+1% Click Power' },
   { id: 'hundred', name: 'Centurion', desc: '100 Cycles gesammelt', check: g => g.totalEarned >= 100, reward: { type: 'cpsBonus', value: 0.02 }, rewardDesc: '+2% CPS' },
@@ -862,6 +905,7 @@ const ACHIEVEMENTS = [
   { id: 'pager_duty', name: 'PagerDuty 3AM', desc: 'Spiel zwischen 03:00-04:00 geöffnet', check: g => g.pagerDutyTriggered, reward: { type: 'cpsBonus', value: 0.30 }, rewardDesc: '3x CPS 10min (1x/Tag)' },
   { id: 'legacy_code', name: 'Legacy Code', desc: 'Prestige mit exakt 1.048.576 Cycles', check: g => g.legacyCodeTriggered, reward: { type: 'prestigeBonus', value: 0.10 }, rewardDesc: '+1 Bonus-Prestige-Punkt' },
   { id: 'unicorn', name: 'Unicorn Startup', desc: '10M Cycles in unter 30 Minuten', check: g => g.totalEarned >= 10000000 && g.sessionPlayTime < 1800000, reward: { type: 'cpsBonus', value: 0.50 }, rewardDesc: '+50% CPS' },
+  { id: 'release_manager', name: 'Release Manager', desc: 'Führe einen erfolgreichen Deploy durch', check: g => g.successfulDeploys >= 1, reward: { type: 'cpsBonus', value: 0.08 }, rewardDesc: '+8% CPS' },
 ];
 
 class Game {
@@ -901,6 +945,16 @@ class Game {
     this.pagerDutyTriggered = false;
     this.pagerDutyDate = null;
     this.legacyCodeTriggered = false;
+    this.deploysStarted = 0;
+    this.successfulDeploys = 0;
+    this.failedDeploys = 0;
+    this.lastDeployAt = null;
+    this.releaseStatus = 'idle';
+    this.releaseStageIndex = -1;
+    this.releaseStageTimer = 0;
+    this.releaseDeployBonusTimer = 0;
+    this.releaseDeployBonusMultiplier = 1;
+    this.releaseMessage = 'Change Window bereit.';
     this.sessionStart = Date.now();
     this.lastOnline = 0;
     this.currentTab = 'hardware';
@@ -943,6 +997,7 @@ class Game {
     this.renderTabs();
     this.renderUpgrades();
     this.renderTickets();
+    this.renderReleaseTrain();
   }
 
   initAudio() {
@@ -1183,6 +1238,7 @@ class Game {
     cps *= this.multiplier;
     cps *= this.getAchievementReward('cpsBonus');
     cps *= this.getAchievementReward('ticketBonus');
+    cps *= this.releaseDeployBonusMultiplier;
     if (this.cpsPenaltyTimer > 0) cps *= this.cpsPenalty;
     if (this.sev1Active) cps = 0;
     return cps;
@@ -1229,6 +1285,8 @@ class Game {
         this.checkAchievements();
       }
     }
+
+    this.updateReleaseTrain(dt);
 
     this.updateTickets(dt);
     this.updateDisplay();
@@ -1735,6 +1793,122 @@ class Game {
     document.getElementById('resolvedTickets').textContent = this.ticketsResolved;
   }
 
+  getDeployRisk() {
+    const p1Count = this.tickets.filter(t => t.type === 'p1').length;
+    const ticketRisk = this.tickets.length * 0.04;
+    const incidentRisk = p1Count * 0.12;
+    const experienceCredit = Math.min(0.25, this.successfulDeploys * 0.04 + this.prestige * 0.03 + this.ticketsResolved * 0.001);
+    const risk = 0.18 + ticketRisk + incidentRisk - experienceCredit;
+    return Math.max(0.05, Math.min(0.85, risk));
+  }
+
+  canStartDeploy() {
+    return this.releaseStatus === 'idle' && !this.sev1Active && this.tickets.length <= 5;
+  }
+
+  startDeploy() {
+    if (!this.canStartDeploy()) {
+      const reason = this.sev1Active ? 'SEV1 aktiv: Change Freeze.' : 'Zu viele offene Tickets: erst Backlog stabilisieren.';
+      this.releaseMessage = reason;
+      this.toast(reason, 'warn');
+      this.renderReleaseTrain();
+      return;
+    }
+    this.deploysStarted++;
+    this.releaseStatus = 'building';
+    this.releaseStageIndex = 0;
+    this.releaseStageTimer = 2.5;
+    this.releaseMessage = 'Build läuft. Bitte keine Panik-Commits.';
+    this.toast('Release Train gestartet');
+    this.renderReleaseTrain();
+  }
+
+  updateReleaseTrain(dt) {
+    if (this.releaseDeployBonusTimer > 0) {
+      this.releaseDeployBonusTimer -= dt;
+      if (this.releaseDeployBonusTimer <= 0) {
+        this.releaseDeployBonusTimer = 0;
+        this.releaseDeployBonusMultiplier = 1;
+        this.toast('Release-Bonus ausgelaufen');
+      }
+    }
+
+    if (!['building', 'testing', 'security', 'deploying'].includes(this.releaseStatus)) return;
+    this.releaseStageTimer -= dt;
+    if (this.releaseStageTimer > 0) return;
+
+    if (this.releaseStageIndex < RELEASE_STAGES.length - 1) {
+      this.releaseStageIndex++;
+      this.releaseStatus = RELEASE_STAGES[this.releaseStageIndex].id;
+      this.releaseStageTimer = 2.5;
+      const labels = { testing: 'Tests laufen.', security: 'Security Review läuft.', deploying: 'Deploy wird vorbereitet.' };
+      this.releaseMessage = labels[this.releaseStatus] || 'Release läuft.';
+      return;
+    }
+
+    this.finishDeploy();
+  }
+
+  finishDeploy() {
+    const risk = this.getDeployRisk();
+    if (Math.random() < risk) {
+      this.failedDeploys++;
+      this.releaseStatus = 'failed';
+      this.releaseStageIndex = RELEASE_STAGES.length - 1;
+      this.releaseMessage = 'Deploy fehlgeschlagen: Incident erzeugt, Rollback eingeleitet.';
+      this.tickets.push({ id: Date.now(), type: 'p1', title: 'Failed deployment rollback', reward: 500, sla: 20, maxSla: 20, createdAt: Date.now(), autoCloseTimer: this.getAutoClose('p1'), noSla: this.hasNoSla('p1') });
+      this.toast('Deploy fehlgeschlagen: P1 eröffnet', 'danger');
+    } else {
+      this.successfulDeploys++;
+      this.lastDeployAt = new Date().toISOString();
+      this.releaseStatus = 'success';
+      this.releaseStageIndex = RELEASE_STAGES.length;
+      this.releaseDeployBonusTimer = 120;
+      this.releaseDeployBonusMultiplier = 1.25;
+      this.releaseMessage = 'Production stabil: +25% CPS für 120 Sekunden.';
+      this.cycles += 250 * this.multiplier;
+      this.totalEarned += 250 * this.multiplier;
+      this.toast('Deploy erfolgreich: Release-Bonus aktiv!');
+      this.checkAchievements();
+    }
+    this.save();
+    setTimeout(() => {
+      if (this.releaseStatus === 'success' || this.releaseStatus === 'failed') {
+        this.releaseStatus = 'idle';
+        this.releaseStageIndex = -1;
+        this.releaseMessage = 'Change Window bereit.';
+        this.renderReleaseTrain();
+      }
+    }, 4000);
+    this.renderTickets();
+    this.renderReleaseTrain();
+  }
+
+  renderReleaseTrain() {
+    const track = document.getElementById('releaseTrack');
+    if (!track) return;
+    const activeIndex = this.releaseStageIndex;
+    track.innerHTML = RELEASE_STAGES.map((stage, index) => {
+      let cls = 'release-step';
+      if (this.releaseStatus === 'failed' && index === RELEASE_STAGES.length - 1) cls += ' failed';
+      else if (this.releaseStatus === 'success' || index < activeIndex) cls += ' done';
+      else if (index === activeIndex) cls += ' active';
+      return `<div class="${cls}">${stage.label}</div>`;
+    }).join('');
+    const status = document.getElementById('releaseStatusText');
+    const risk = document.getElementById('releaseRisk');
+    const successes = document.getElementById('releaseSuccesses');
+    const bonus = document.getElementById('releaseBonus');
+    const btn = document.getElementById('deployBtn');
+    const note = document.getElementById('releaseNote');
+    if (status) status.textContent = this.releaseStatus;
+    if (risk) risk.textContent = Math.round(this.getDeployRisk() * 100) + '%';
+    if (successes) successes.textContent = `${this.successfulDeploys}/${this.deploysStarted}`;
+    if (bonus) bonus.textContent = this.releaseDeployBonusTimer > 0 ? `${Math.ceil(this.releaseDeployBonusTimer)}s` : '0s';
+    if (btn) { btn.disabled = !this.canStartDeploy(); btn.textContent = this.releaseStatus === 'idle' ? 'Deploy starten' : 'Release läuft'; }
+    if (note) { note.textContent = this.releaseMessage; note.className = 'release-note ' + (this.releaseStatus === 'failed' ? 'danger' : this.releaseStatus === 'success' ? 'good' : this.canStartDeploy() ? '' : 'warn'); }
+  }
+
   updateDisplay() {
     document.getElementById('resourceDisplay').textContent = 'CPU Cycles: ' + this.fmt(Math.floor(this.cycles));
     document.getElementById('cpsDisplay').textContent = '(' + (this.cps >= 0 ? '+' : '') + this.fmt(this.cps) + '/s)';
@@ -1787,6 +1961,12 @@ class Game {
       pagerDutyTriggered: this.pagerDutyTriggered,
       pagerDutyDate: this.pagerDutyDate,
       legacyCodeTriggered: this.legacyCodeTriggered,
+      deploysStarted: this.deploysStarted,
+      successfulDeploys: this.successfulDeploys,
+      failedDeploys: this.failedDeploys,
+      lastDeployAt: this.lastDeployAt,
+      releaseDeployBonusTimer: this.releaseDeployBonusTimer,
+      releaseDeployBonusMultiplier: this.releaseDeployBonusMultiplier,
       sessionStart: this.sessionStart,
       lastOnline: Date.now(),
       // Audio settings
@@ -1825,6 +2005,15 @@ class Game {
       this.pagerDutyTriggered = data.pagerDutyTriggered || false;
       this.pagerDutyDate = data.pagerDutyDate || null;
       this.legacyCodeTriggered = data.legacyCodeTriggered || false;
+      this.deploysStarted = data.deploysStarted || 0;
+      this.successfulDeploys = data.successfulDeploys || 0;
+      this.failedDeploys = data.failedDeploys || 0;
+      this.lastDeployAt = data.lastDeployAt || null;
+      this.releaseDeployBonusTimer = data.releaseDeployBonusTimer || 0;
+      this.releaseDeployBonusMultiplier = data.releaseDeployBonusMultiplier || 1;
+      this.releaseStatus = 'idle';
+      this.releaseStageIndex = -1;
+      this.releaseMessage = 'Change Window bereit.';
       this.sessionStart = data.sessionStart || Date.now();
       this.lastOnline = data.lastOnline || 0;
       // Load audio settings
@@ -1871,6 +2060,12 @@ class Game {
       pagerDutyTriggered: this.pagerDutyTriggered,
       pagerDutyDate: this.pagerDutyDate,
       legacyCodeTriggered: this.legacyCodeTriggered,
+      deploysStarted: this.deploysStarted,
+      successfulDeploys: this.successfulDeploys,
+      failedDeploys: this.failedDeploys,
+      lastDeployAt: this.lastDeployAt,
+      releaseDeployBonusTimer: this.releaseDeployBonusTimer,
+      releaseDeployBonusMultiplier: this.releaseDeployBonusMultiplier,
       sessionStart: this.sessionStart,
       // Audio settings
       masterVolume: this.masterVolume,
