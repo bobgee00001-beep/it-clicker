@@ -433,6 +433,17 @@
   .release-note.warn { color: var(--warn); }
   .release-note.good { color: var(--fg); }
   .release-note.danger { color: var(--danger); }
+  .observability-panel { width: min(520px, 100%); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px; background: var(--panel); }
+  .observability-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
+  .observability-metric { border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px; min-width: 0; }
+  .observability-metric .label { display: block; color: var(--text-dim); font-size: 0.62rem; }
+  .observability-metric .value { display: block; color: var(--text); font-size: 0.78rem; font-weight: 700; margin-top: 2px; }
+  .observability-health { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; border: 1px solid var(--panel-border); }
+  .observability-health-fill { height: 100%; width: 0%; background: var(--fg); transition: width 0.25s ease, background 0.25s ease; }
+  .observability-note { margin-top: 6px; min-height: 16px; color: var(--text-dim); font-size: 0.7rem; line-height: 1.25; }
+  .observability-note.warn { color: var(--warn); }
+  .observability-note.good { color: var(--fg); }
+  .observability-note.danger { color: var(--danger); }
 
 </style>
 </head>
@@ -490,6 +501,22 @@
       </div>
       <button class="save-btn release-action" id="deployBtn" onclick="game.startDeploy()">Deploy starten</button>
       <div class="release-note" id="releaseNote">Change Window bereit.</div>
+    </div>
+
+    <div class="observability-panel" id="observabilityPanel">
+      <div class="release-header">
+        <span class="release-title">Observability / Rollback</span>
+        <span class="release-status" id="observabilityStatus">Stable</span>
+      </div>
+      <div class="observability-health"><div class="observability-health-fill" id="observabilityHealthFill"></div></div>
+      <div class="observability-grid">
+        <div class="observability-metric"><span class="label">Uptime</span><span class="value" id="uptimeMetric">99.95%</span></div>
+        <div class="observability-metric"><span class="label">Error Rate</span><span class="value" id="errorRateMetric">0.05%</span></div>
+        <div class="observability-metric"><span class="label">Error Budget</span><span class="value" id="errorBudgetMetric">100%</span></div>
+        <div class="observability-metric"><span class="label">Incidents</span><span class="value" id="incidentMetric">0</span></div>
+      </div>
+      <button class="save-btn release-action" id="rollbackBtn" onclick="game.performRollback()">Rollback durchführen</button>
+      <div class="observability-note" id="observabilityNote">Keine aktive Release-Beobachtung.</div>
     </div>
     <div class="save-controls">
       <button class="save-btn" onclick="game.save()">💾 Speichern</button>
@@ -907,6 +934,7 @@ const ACHIEVEMENTS = [
   { id: 'legacy_code', name: 'Legacy Code', desc: 'Prestige mit exakt 1.048.576 Cycles', check: g => g.legacyCodeTriggered, reward: { type: 'prestigeBonus', value: 0.10 }, rewardDesc: '+1 Bonus-Prestige-Punkt' },
   { id: 'unicorn', name: 'Unicorn Startup', desc: '10M Cycles in unter 30 Minuten', check: g => g.totalEarned >= 10000000 && g.sessionPlayTime < 1800000, reward: { type: 'cpsBonus', value: 0.50 }, rewardDesc: '+50% CPS' },
   { id: 'release_manager', name: 'Release Manager', desc: 'Führe einen erfolgreichen Deploy durch', check: g => g.successfulDeploys >= 1, reward: { type: 'cpsBonus', value: 0.08 }, rewardDesc: '+8% CPS' },
+  { id: 'rollback_ready', name: 'Rollback Ready', desc: 'Führe einen Rollback durch oder überwache ein Release fehlerfrei', check: g => g.rollbacksPerformed >= 1 || g.cleanMonitoringWindows >= 1, reward: { type: 'cpsBonus', value: 0.06 }, rewardDesc: '+6% CPS' },
 ];
 
 class Game {
@@ -956,6 +984,19 @@ class Game {
     this.releaseDeployBonusTimer = 0;
     this.releaseDeployBonusMultiplier = 1;
     this.releaseMessage = 'Change Window bereit.';
+    this.rollbacksPerformed = 0;
+    this.lastRollbackAt = null;
+    this.errorBudget = 100;
+    this.observabilityScore = 82;
+    this.activeIncidents = 0;
+    this.uptime = 99.95;
+    this.errorRate = 0.05;
+    this.monitoringTimer = 0;
+    this.rollbackAvailable = false;
+    this.cleanMonitoringWindows = 0;
+    this.lastDeploymentQuality = 'No deploys yet';
+    this.observabilityMessage = 'Keine aktive Release-Beobachtung.';
+    this.lastReleaseEvidence = 'Noch keine Release-Evidenz.';
     this.sessionStart = Date.now();
     this.lastOnline = 0;
     this.currentTab = 'hardware';
@@ -999,6 +1040,7 @@ class Game {
     this.renderUpgrades();
     this.renderTickets();
     this.renderReleaseTrain();
+    this.renderObservability();
   }
 
   initAudio() {
@@ -1240,6 +1282,7 @@ class Game {
     cps *= this.getAchievementReward('cpsBonus');
     cps *= this.getAchievementReward('ticketBonus');
     cps *= this.releaseDeployBonusMultiplier;
+    cps *= 1 + Math.max(0, this.observabilityScore - 80) / 1000;
     if (this.cpsPenaltyTimer > 0) cps *= this.cpsPenalty;
     if (this.sev1Active) cps = 0;
     return cps;
@@ -1288,6 +1331,7 @@ class Game {
     }
 
     this.updateReleaseTrain(dt);
+    this.updateObservability(dt);
 
     this.updateTickets(dt);
     this.updateDisplay();
@@ -1552,6 +1596,8 @@ class Game {
     else if (a.id === 'pager_duty') { cur = this.pagerDutyTriggered ? 1 : 0; max = 1; }
     else if (a.id === 'legacy_code') { cur = this.legacyCodeTriggered ? 1 : 0; max = 1; }
     else if (a.id === 'unicorn') { cur = Math.floor(this.totalEarned); max = 10000000; }
+    else if (a.id === 'release_manager') { cur = this.successfulDeploys; max = 1; }
+    else if (a.id === 'rollback_ready') { cur = Math.max(this.rollbacksPerformed, this.cleanMonitoringWindows); max = 1; }
     return { current: cur, target: max, pct: Math.min(100, (cur / max) * 100) };
   }
 
@@ -1798,8 +1844,10 @@ class Game {
     const p1Count = this.tickets.filter(t => t.type === 'p1').length;
     const ticketRisk = this.tickets.length * 0.04;
     const incidentRisk = p1Count * 0.12;
+    const budgetRisk = Math.max(0, 60 - this.errorBudget) * 0.003;
+    const observabilityCredit = Math.max(0, this.observabilityScore - 70) * 0.003;
     const experienceCredit = Math.min(0.25, this.successfulDeploys * 0.04 + this.prestige * 0.03 + this.ticketsResolved * 0.001);
-    const risk = 0.18 + ticketRisk + incidentRisk - experienceCredit;
+    const risk = 0.18 + ticketRisk + incidentRisk + budgetRisk - observabilityCredit - experienceCredit;
     return Math.max(0.05, Math.min(0.85, risk));
   }
 
@@ -1856,9 +1904,18 @@ class Game {
       this.failedDeploys++;
       this.releaseStatus = 'failed';
       this.releaseStageIndex = RELEASE_STAGES.length - 1;
-      this.releaseMessage = 'Deploy fehlgeschlagen: Incident erzeugt, Rollback eingeleitet.';
+      this.releaseMessage = 'Deploy fehlgeschlagen: Incident erzeugt, Rollback bereit.';
+      this.activeIncidents++;
+      this.rollbackAvailable = true;
+      this.errorBudget = Math.max(0, this.errorBudget - 24);
+      this.errorRate = Math.min(9.99, this.errorRate + 2.4);
+      this.uptime = Math.max(95, this.uptime - 0.35);
+      this.observabilityScore = Math.max(25, this.observabilityScore - 18);
+      this.lastDeploymentQuality = 'Incident';
+      this.observabilityMessage = 'P1 nach Deploy: Rollback empfohlen.';
+      this.lastReleaseEvidence = `Failed deploy #${this.deploysStarted} - ${new Date().toISOString()}`;
       this.tickets.push({ id: Date.now(), type: 'p1', title: 'Failed deployment rollback', reward: 500, sla: 20, maxSla: 20, createdAt: Date.now(), autoCloseTimer: this.getAutoClose('p1'), noSla: this.hasNoSla('p1') });
-      this.toast('Deploy fehlgeschlagen: P1 eröffnet', 'danger');
+      this.toast('Deploy fehlgeschlagen: P1 er\u00f6ffnet', 'danger');
     } else {
       this.successfulDeploys++;
       this.lastDeployAt = new Date().toISOString();
@@ -1866,7 +1923,16 @@ class Game {
       this.releaseStageIndex = RELEASE_STAGES.length;
       this.releaseDeployBonusTimer = 120;
       this.releaseDeployBonusMultiplier = 1.25;
-      this.releaseMessage = 'Production stabil: +25% CPS für 120 Sekunden.';
+      this.monitoringTimer = 60;
+      this.errorBudget = Math.min(100, this.errorBudget + 8);
+      this.errorRate = Math.max(0.01, this.errorRate - 0.08);
+      this.uptime = Math.min(99.99, this.uptime + 0.03);
+      this.observabilityScore = Math.min(100, this.observabilityScore + 7);
+      this.rollbackAvailable = false;
+      this.lastDeploymentQuality = 'Monitoring';
+      this.lastReleaseEvidence = `Successful deploy #${this.successfulDeploys} - ${this.lastDeployAt}`;
+      this.observabilityMessage = 'Post-Deploy-Monitoring l\u00e4uft.';
+      this.releaseMessage = 'Production stabil: +25% CPS f\u00fcr 120 Sekunden.';
       this.cycles += 250 * this.multiplier;
       this.totalEarned += 250 * this.multiplier;
       this.toast('Deploy erfolgreich: Release-Bonus aktiv!');
@@ -1883,6 +1949,82 @@ class Game {
     }, 4000);
     this.renderTickets();
     this.renderReleaseTrain();
+    this.renderObservability();
+  }
+
+  updateObservability(dt) {
+    const p1Count = this.tickets.filter(t => t.type === 'p1').length;
+    const backlogPressure = Math.max(0, this.tickets.length - 5) * dt * 0.02;
+    const incidentPressure = (p1Count * dt * 0.04) + (this.activeIncidents * dt * 0.05) + backlogPressure;
+    if (incidentPressure > 0) {
+      this.errorBudget = Math.max(0, this.errorBudget - incidentPressure);
+      this.errorRate = Math.min(9.99, this.errorRate + incidentPressure * 0.08);
+      this.uptime = Math.max(95, this.uptime - incidentPressure * 0.01);
+      this.observabilityScore = Math.max(20, this.observabilityScore - incidentPressure * 0.25);
+    } else {
+      this.errorBudget = Math.min(100, this.errorBudget + dt * 0.015);
+      this.errorRate = Math.max(0.01, this.errorRate - dt * 0.003);
+      this.uptime = Math.min(99.99, this.uptime + dt * 0.001);
+      this.observabilityScore = Math.min(100, this.observabilityScore + dt * 0.02);
+    }
+
+    if (this.monitoringTimer > 0) {
+      this.monitoringTimer -= dt;
+      if (p1Count > 0 || this.errorRate >= 1.5 || this.errorBudget < 50) {
+        this.rollbackAvailable = true;
+        this.activeIncidents = Math.max(this.activeIncidents, 1);
+        this.lastDeploymentQuality = 'Degraded';
+        this.observabilityMessage = 'Monitoring meldet Regression: Rollback pr\u00fcfen.';
+      }
+      if (this.monitoringTimer <= 0) {
+        this.monitoringTimer = 0;
+        if (!this.rollbackAvailable && this.activeIncidents === 0 && this.errorBudget >= 70) {
+          this.cleanMonitoringWindows++;
+          this.lastDeploymentQuality = 'Healthy';
+          this.observabilityMessage = 'Monitoring-Fenster sauber abgeschlossen.';
+          this.checkAchievements();
+        }
+      }
+    }
+
+    this.renderObservability();
+  }
+
+  canRollback() {
+    return this.rollbackAvailable || this.activeIncidents > 0 || this.errorRate >= 1.5 || this.errorBudget < 45;
+  }
+
+  performRollback() {
+    if (!this.canRollback()) {
+      this.observabilityMessage = 'Rollback nicht n\u00f6tig: Systeme stabil.';
+      this.toast('Rollback nicht n\u00f6tig', 'warn');
+      this.renderObservability();
+      return;
+    }
+    const rollbackCost = Math.min(this.cycles, 150 * this.multiplier + this.activeIncidents * 100);
+    this.cycles = Math.max(0, this.cycles - rollbackCost);
+    this.rollbacksPerformed++;
+    this.lastRollbackAt = new Date().toISOString();
+    this.activeIncidents = Math.max(0, this.activeIncidents - 1);
+    this.errorBudget = Math.min(100, this.errorBudget + 28);
+    this.errorRate = Math.max(0.05, this.errorRate * 0.35);
+    this.uptime = Math.min(99.99, this.uptime + 0.25);
+    this.observabilityScore = Math.min(100, this.observabilityScore + 18);
+    this.rollbackAvailable = false;
+    this.monitoringTimer = 0;
+    this.releaseDeployBonusTimer = 0;
+    this.releaseDeployBonusMultiplier = 1;
+    this.lastDeploymentQuality = 'Rolled back';
+    this.lastReleaseEvidence = `Rollback #${this.rollbacksPerformed} - ${this.lastRollbackAt}`;
+    this.observabilityMessage = `Rollback abgeschlossen. Kosten: ${this.fmt(rollbackCost)} Cycles.`;
+    const idx = this.tickets.findIndex(t => t.title.toLowerCase().includes('deployment'));
+    if (idx >= 0) this.tickets.splice(idx, 1);
+    this.toast('Rollback abgeschlossen: Incident-Druck sinkt');
+    this.checkAchievements();
+    this.save();
+    this.renderTickets();
+    this.renderReleaseTrain();
+    this.renderObservability();
   }
 
   renderReleaseTrain() {
@@ -1910,6 +2052,34 @@ class Game {
     if (note) { note.textContent = this.releaseMessage; note.className = 'release-note ' + (this.releaseStatus === 'failed' ? 'danger' : this.releaseStatus === 'success' ? 'good' : this.canStartDeploy() ? '' : 'warn'); }
   }
 
+  renderObservability() {
+    const score = Math.round(this.observabilityScore);
+    const status = document.getElementById('observabilityStatus');
+    const fill = document.getElementById('observabilityHealthFill');
+    const uptime = document.getElementById('uptimeMetric');
+    const errorRate = document.getElementById('errorRateMetric');
+    const errorBudget = document.getElementById('errorBudgetMetric');
+    const incidents = document.getElementById('incidentMetric');
+    const rollbackBtn = document.getElementById('rollbackBtn');
+    const note = document.getElementById('observabilityNote');
+    const state = this.canRollback() ? 'Rollback ready' : this.monitoringTimer > 0 ? 'Monitoring' : score >= 75 ? 'Stable' : 'Degraded';
+    if (status) status.textContent = state;
+    if (fill) {
+      fill.style.width = `${Math.max(0, Math.min(100, score))}%`;
+      fill.style.background = score < 50 ? 'var(--danger)' : score < 75 ? 'var(--warn)' : 'var(--fg)';
+    }
+    if (uptime) uptime.textContent = `${this.uptime.toFixed(2)}%`;
+    if (errorRate) errorRate.textContent = `${this.errorRate.toFixed(2)}%`;
+    if (errorBudget) errorBudget.textContent = `${Math.round(this.errorBudget)}%`;
+    if (incidents) incidents.textContent = this.activeIncidents;
+    if (rollbackBtn) { rollbackBtn.disabled = !this.canRollback(); rollbackBtn.textContent = this.canRollback() ? 'Rollback durchführen' : 'Rollback nicht n?tig'; }
+    if (note) {
+      const monitoring = this.monitoringTimer > 0 ? ` Monitoring: ${Math.ceil(this.monitoringTimer)}s.` : '';
+      note.textContent = `${this.observabilityMessage}${monitoring} ${this.lastDeploymentQuality}.`;
+      note.className = 'observability-note ' + (this.canRollback() ? 'danger' : this.monitoringTimer > 0 ? 'warn' : score >= 75 ? 'good' : 'warn');
+    }
+  }
+
   updateDisplay() {
     document.getElementById('resourceDisplay').textContent = 'CPU Cycles: ' + this.fmt(Math.floor(this.cycles));
     document.getElementById('cpsDisplay').textContent = '(' + (this.cps >= 0 ? '+' : '') + this.fmt(this.cps) + '/s)';
@@ -1928,6 +2098,8 @@ class Game {
 
     this.renderUpgrades();
     this.renderTickets();
+    this.renderReleaseTrain();
+    this.renderObservability();
   }
 
   updateSpendTracking(amount) {
@@ -1968,6 +2140,19 @@ class Game {
       lastDeployAt: this.lastDeployAt,
       releaseDeployBonusTimer: this.releaseDeployBonusTimer,
       releaseDeployBonusMultiplier: this.releaseDeployBonusMultiplier,
+      rollbacksPerformed: this.rollbacksPerformed,
+      lastRollbackAt: this.lastRollbackAt,
+      errorBudget: this.errorBudget,
+      observabilityScore: this.observabilityScore,
+      activeIncidents: this.activeIncidents,
+      uptime: this.uptime,
+      errorRate: this.errorRate,
+      monitoringTimer: this.monitoringTimer,
+      rollbackAvailable: this.rollbackAvailable,
+      cleanMonitoringWindows: this.cleanMonitoringWindows,
+      lastDeploymentQuality: this.lastDeploymentQuality,
+      observabilityMessage: this.observabilityMessage,
+      lastReleaseEvidence: this.lastReleaseEvidence,
       sessionStart: this.sessionStart,
       lastOnline: Date.now(),
       // Audio settings
@@ -2012,6 +2197,19 @@ class Game {
       this.lastDeployAt = data.lastDeployAt || null;
       this.releaseDeployBonusTimer = data.releaseDeployBonusTimer || 0;
       this.releaseDeployBonusMultiplier = data.releaseDeployBonusMultiplier || 1;
+      this.rollbacksPerformed = data.rollbacksPerformed || 0;
+      this.lastRollbackAt = data.lastRollbackAt || null;
+      this.errorBudget = data.errorBudget ?? 100;
+      this.observabilityScore = data.observabilityScore ?? 82;
+      this.activeIncidents = data.activeIncidents || 0;
+      this.uptime = data.uptime ?? 99.95;
+      this.errorRate = data.errorRate ?? 0.05;
+      this.monitoringTimer = data.monitoringTimer || 0;
+      this.rollbackAvailable = data.rollbackAvailable || false;
+      this.cleanMonitoringWindows = data.cleanMonitoringWindows || 0;
+      this.lastDeploymentQuality = data.lastDeploymentQuality || 'No deploys yet';
+      this.observabilityMessage = data.observabilityMessage || 'Keine aktive Release-Beobachtung.';
+      this.lastReleaseEvidence = data.lastReleaseEvidence || 'Noch keine Release-Evidenz.';
       this.releaseStatus = 'idle';
       this.releaseStageIndex = -1;
       this.releaseMessage = 'Change Window bereit.';
@@ -2067,6 +2265,19 @@ class Game {
       lastDeployAt: this.lastDeployAt,
       releaseDeployBonusTimer: this.releaseDeployBonusTimer,
       releaseDeployBonusMultiplier: this.releaseDeployBonusMultiplier,
+      rollbacksPerformed: this.rollbacksPerformed,
+      lastRollbackAt: this.lastRollbackAt,
+      errorBudget: this.errorBudget,
+      observabilityScore: this.observabilityScore,
+      activeIncidents: this.activeIncidents,
+      uptime: this.uptime,
+      errorRate: this.errorRate,
+      monitoringTimer: this.monitoringTimer,
+      rollbackAvailable: this.rollbackAvailable,
+      cleanMonitoringWindows: this.cleanMonitoringWindows,
+      lastDeploymentQuality: this.lastDeploymentQuality,
+      observabilityMessage: this.observabilityMessage,
+      lastReleaseEvidence: this.lastReleaseEvidence,
       sessionStart: this.sessionStart,
       // Audio settings
       masterVolume: this.masterVolume,
@@ -2120,6 +2331,25 @@ class Game {
         this.pagerDutyTriggered = data.pagerDutyTriggered || false;
         this.pagerDutyDate = data.pagerDutyDate || null;
         this.legacyCodeTriggered = data.legacyCodeTriggered || false;
+        this.deploysStarted = data.deploysStarted || 0;
+        this.successfulDeploys = data.successfulDeploys || 0;
+        this.failedDeploys = data.failedDeploys || 0;
+        this.lastDeployAt = data.lastDeployAt || null;
+        this.releaseDeployBonusTimer = data.releaseDeployBonusTimer || 0;
+        this.releaseDeployBonusMultiplier = data.releaseDeployBonusMultiplier || 1;
+        this.rollbacksPerformed = data.rollbacksPerformed || 0;
+        this.lastRollbackAt = data.lastRollbackAt || null;
+        this.errorBudget = data.errorBudget ?? 100;
+        this.observabilityScore = data.observabilityScore ?? 82;
+        this.activeIncidents = data.activeIncidents || 0;
+        this.uptime = data.uptime ?? 99.95;
+        this.errorRate = data.errorRate ?? 0.05;
+        this.monitoringTimer = data.monitoringTimer || 0;
+        this.rollbackAvailable = data.rollbackAvailable || false;
+        this.cleanMonitoringWindows = data.cleanMonitoringWindows || 0;
+        this.lastDeploymentQuality = data.lastDeploymentQuality || 'No deploys yet';
+        this.observabilityMessage = data.observabilityMessage || 'Keine aktive Release-Beobachtung.';
+        this.lastReleaseEvidence = data.lastReleaseEvidence || 'Noch keine Release-Evidenz.';
         this.sessionStart = data.sessionStart || Date.now();
         this.lastOnline = data.lastOnline || 0;
         // Load audio settings
