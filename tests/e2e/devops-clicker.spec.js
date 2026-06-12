@@ -1,11 +1,16 @@
 import { test, expect } from '@playwright/test';
 
-test('public clicker is paused behind a maintenance page', async ({ page }) => {
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+  });
+});
+
+test('restored clicker shell loads', async ({ page }) => {
   await page.goto('/');
-  await expect(page).toHaveTitle('IT-Clicker pausiert');
-  await expect(page.getByRole('heading', { name: 'IT-Clicker ist pausiert' })).toBeVisible();
-  await expect(page.getByText(/Diese Demo ist aktuell nicht .*ffentlich verf.*gbar\./)).toBeVisible();
-  await expect(page.getByText('Gee-Corp Release Hold - 2026-06-12')).toBeVisible();
-  await expect(page.getByText('DevOps Clicker')).toHaveCount(0);
-  await expect(page.getByText('Release Train')).toHaveCount(0);
+  await expect(page).toHaveTitle('DevOps Clicker');
+  await expect(page.getByText('DevOps Clicker')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Speichern/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Laden/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Deploy starten/ })).toBeVisible();
 });
