@@ -14,7 +14,7 @@
 })();
 
 const SAVE_STORAGE_KEY = 'devopsClicker';
-const SAVE_VERSION = 3;
+const SAVE_VERSION = 4;
 </script>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -606,7 +606,6 @@ const SAVE_VERSION = 3;
   .observability-note.warn { color: var(--warn); }
   .observability-note.good { color: var(--fg); }
   .observability-note.danger { color: var(--danger); }
-
 </style>
 </head>
 <body>
@@ -648,6 +647,10 @@ const SAVE_VERSION = 3;
     <div class="stats-row">
       <span>Pro Klick: <span id="clickPower">1</span></span>
       <span>Prestige: <span id="prestigeLevel">0</span></span>
+    </div>
+    <div class="stats-row">
+      <span id="workerSummary">Workers: 0 (0.0 clicks/s)</span>
+      <span>Worker Output: <span id="workerEarned">0</span></span>
     </div>
 
     <div class="release-panel" id="releasePanel">
@@ -760,6 +763,12 @@ const UPGRADES = {
     { id: 'mouse', name: 'Gaming Mouse', icon: '🖱️', baseCost: 500, clickBonus: 3, desc: '+3/Klick' },
     { id: 'monitor', name: '4K Monitor Array', icon: '🖥️', baseCost: 2500, clickBonus: 10, desc: '+10/Klick' },
     { id: 'neural', name: 'Neural Interface', icon: '🔌', baseCost: 15000, clickBonus: 50, desc: '+50/Klick' },
+  ],
+  workers: [
+    { id: 'intern', name: 'Intern', icon: '🧑‍💻', baseCost: 50, clickInterval: 2, workerCount: 1, desc: '1 Auto-Klick alle 2 Sekunden' },
+    { id: 'junior', name: 'Junior Dev', icon: '👩‍💻', baseCost: 500, clickInterval: 1, workerCount: 1, desc: '1 Auto-Klick pro Sekunde' },
+    { id: 'senior', name: 'Senior Engineer', icon: '🧠', baseCost: 5000, clickInterval: 0.5, workerCount: 1, desc: '2 Auto-Klicks pro Sekunde' },
+    { id: 'staff', name: 'Staff Engineer', icon: '🚀', baseCost: 50000, clickInterval: 0.25, workerCount: 1, desc: '4 Auto-Klicks pro Sekunde' },
   ],
   itsm: [
     { id: 'bot', name: 'Helpdesk Bot', icon: '🤖', baseCost: 500, desc: 'Auto-close P3 nach 5 Sek', itsmType: 'p3', autoClose: 5 },
@@ -1118,6 +1127,7 @@ const ACHIEVEMENTS = [
   { id: 'unicorn', name: 'Unicorn Startup', desc: '10M Cycles in unter 30 Minuten', check: g => g.totalEarned >= 10000000 && g.sessionPlayTime < 1800000, reward: { type: 'cpsBonus', value: 0.50 }, rewardDesc: '+50% CPS' },
   { id: 'release_manager', name: 'Release Manager', desc: 'Führe einen erfolgreichen Deploy durch', check: g => g.successfulDeploys >= 1, reward: { type: 'cpsBonus', value: 0.08 }, rewardDesc: '+8% CPS' },
   { id: 'rollback_ready', name: 'Rollback Ready', desc: 'Führe einen Rollback durch oder überwache ein Release fehlerfrei', check: g => g.rollbacksPerformed >= 1 || g.cleanMonitoringWindows >= 1, reward: { type: 'cpsBonus', value: 0.06 }, rewardDesc: '+6% CPS' },
+  { id: 'team_lead', name: 'Team Lead', desc: 'Stelle jede Worker-Rolle mindestens einmal ein', check: g => ['intern', 'junior', 'senior', 'staff'].every(id => (g.upgrades[id] || 0) > 0), reward: { type: 'cpsBonus', value: 0.05 }, rewardDesc: '+5% CPS' },
 ];
 
 class Game {
@@ -1126,6 +1136,7 @@ class Game {
     this.totalClicks = 0;
     this.sessionClicks = 0;
     this.totalEarned = 0;
+    this.workerEarned = 0;
     this.cps = 0;
     this.clickPower = 1;
     this.prestige = 0;
@@ -1183,8 +1194,8 @@ class Game {
     this.sessionStart = Date.now();
     this.lastOnline = 0;
     this.currentTab = 'hardware';
-    this.tabs = ['hardware', 'cloud', 'ai', 'click', 'itsm', 'achievements', 'audio'];
-    this.tabNames = { hardware: 'Hardware', cloud: 'Cloud', ai: 'AI/Quantum', click: 'Click', itsm: 'ITSM', achievements: '🏆 Erfolge', audio: '🔊 Audio' };
+    this.tabs = ['hardware', 'cloud', 'ai', 'click', 'itsm', 'workers', 'achievements', 'audio'];
+    this.tabNames = { hardware: 'Hardware', cloud: 'Cloud', ai: 'AI/Quantum', click: 'Click', itsm: 'ITSM', workers: 'Workers', achievements: '🏆 Erfolge', audio: '🔊 Audio' };
     
     // Audio system
     this.audioContext = null;
@@ -1227,6 +1238,7 @@ class Game {
     this.renderTabs();
     this.renderUpgrades();
     this.renderTickets();
+    this.renderWorkers();
     this.renderReleaseTrain();
     this.renderObservability();
     this.renderEventlog();
@@ -1483,6 +1495,35 @@ class Game {
     return cps;
   }
 
+  calculateWorkerClicksPerSecond() {
+    let rate = 0;
+    for (const u of UPGRADES.workers) {
+      rate += (this.upgrades[u.id] || 0) * (1 / u.clickInterval);
+    }
+    return rate;
+  }
+
+  calculateWorkerCount() {
+    let total = 0;
+    for (const u of UPGRADES.workers) {
+      total += (this.upgrades[u.id] || 0) * (u.workerCount || 0);
+    }
+    return total;
+  }
+
+  calculateWorkerCps() {
+    if (this.sev1Active) return 0;
+    return this.calculateWorkerClicksPerSecond() * this.clickPower * this.multiplier;
+  }
+
+  calculateWorkerClicksForDelta(dt) {
+    let clicks = 0;
+    for (const u of UPGRADES.workers) {
+      clicks += (this.upgrades[u.id] || 0) * (dt / u.clickInterval);
+    }
+    return clicks;
+  }
+
   calculateClickPower() {
     let power = 1;
     for (const u of UPGRADES.click) {
@@ -1497,12 +1538,18 @@ class Game {
     const dt = (now - this.lastTick) / 1000;
     this.lastTick = now;
     this.sessionPlayTime = now - this.sessionStart;
+    this.clickPower = this.calculateClickPower();
 
-    this.cps = this.calculateCps();
+    const infraCps = this.calculateCps();
+    const workerClicks = this.calculateWorkerClicksForDelta(dt);
+    const workerCps = this.calculateWorkerCps();
+    this.cps = infraCps + workerCps;
     const gain = this.cps * dt;
     this.cycles += gain;
     this.totalEarned += gain;
+    this.totalClicks += workerClicks;
     this.passiveEarnedSinceLastClick += gain;
+    this.workerEarned += workerCps * dt;
     if (!this.upgradesEverBought) this.maxCyclesWithoutUpgrades = Math.max(this.maxCyclesWithoutUpgrades, this.cycles);
 
     if (this.cpsPenaltyTimer > 0) {
@@ -1724,6 +1771,7 @@ class Game {
     this.cpsPenalty = 1;
     this.cpsPenaltyTimer = 0;
     this.totalEarned = 0;
+    this.workerEarned = 0;
     this.sessionClicks = 0;
     this.sessionStart = Date.now();
     this.passiveEarnedSinceLastClick = 0;
@@ -1793,6 +1841,7 @@ class Game {
     else if (a.id === 'unicorn') { cur = Math.floor(this.totalEarned); max = 10000000; }
     else if (a.id === 'release_manager') { cur = this.successfulDeploys; max = 1; }
     else if (a.id === 'rollback_ready') { cur = Math.max(this.rollbacksPerformed, this.cleanMonitoringWindows); max = 1; }
+    else if (a.id === 'team_lead') { cur = ['intern', 'junior', 'senior', 'staff'].filter(id => (this.upgrades[id] || 0) > 0).length; max = 4; }
     return { current: cur, target: max, pct: Math.min(100, (cur / max) * 100) };
   }
 
@@ -2081,6 +2130,7 @@ class Game {
       let effect = '';
       if (u.baseCps) effect = `+${u.baseCps} CPS`;
       if (u.clickBonus) effect = `+${u.clickBonus}/Klick`;
+      if (u.clickInterval) effect = `1 Klick / ${u.clickInterval}s`;
       if (u.autoClose) effect = `Auto-close ${u.itsmType.toUpperCase()}`;
       if (u.noSla) effect = 'Keine SLA P3';
       if (u.cpsPerTicket) effect = '+1% CPS/Ticket';
@@ -2122,6 +2172,15 @@ class Game {
     }
     document.getElementById('openTickets').textContent = this.tickets.length;
     document.getElementById('resolvedTickets').textContent = this.ticketsResolved;
+  }
+
+  renderWorkers() {
+    const workerCount = this.calculateWorkerCount();
+    const workerRate = this.calculateWorkerClicksPerSecond();
+    const summary = document.getElementById('workerSummary');
+    const earned = document.getElementById('workerEarned');
+    if (summary) summary.textContent = `Workers: ${this.fmt(workerCount)} (${workerRate.toFixed(1)} clicks/s)`;
+    if (earned) earned.textContent = this.fmt(this.workerEarned);
   }
 
   getDeployRisk() {
@@ -2365,6 +2424,7 @@ class Game {
   }
 
   updateDisplay() {
+    this.clickPower = this.calculateClickPower();
     document.getElementById('resourceDisplay').textContent = 'CPU Cycles: ' + this.fmt(Math.floor(this.cycles));
     document.getElementById('cpsDisplay').textContent = '(' + (this.cps >= 0 ? '+' : '') + this.fmt(this.cps) + '/s)';
     document.getElementById('clickPower').textContent = this.fmt(this.clickPower);
@@ -2382,6 +2442,7 @@ class Game {
 
     this.renderUpgrades();
     this.renderTickets();
+    this.renderWorkers();
     this.renderReleaseTrain();
     this.renderObservability();
   }
@@ -2400,6 +2461,7 @@ class Game {
       cycles: this.cycles,
       totalClicks: this.totalClicks,
       totalEarned: this.totalEarned,
+      workerEarned: this.workerEarned,
       prestige: this.prestige,
       prestigePoints: this.prestigePoints,
       multiplier: this.multiplier,
@@ -2499,6 +2561,7 @@ class Game {
         cycles: numberOr(state.cycles, 0),
         totalClicks: numberOr(state.totalClicks, 0),
         totalEarned: numberOr(state.totalEarned, 0),
+        workerEarned: numberOr(state.workerEarned, 0),
         prestige: numberOr(state.prestige, 0),
         prestigePoints: numberOr(state.prestigePoints, 0),
         multiplier: numberOr(state.multiplier, 1),
@@ -2550,6 +2613,7 @@ class Game {
     this.cycles = data.cycles;
     this.totalClicks = data.totalClicks;
     this.totalEarned = data.totalEarned;
+    this.workerEarned = data.workerEarned;
     this.prestige = data.prestige;
     this.prestigePoints = data.prestigePoints;
     this.multiplier = data.multiplier;

@@ -13,19 +13,22 @@ test('save, migrate, and reload state', async ({ page }) => {
     window.game.cycles = 321;
     window.game.totalClicks = 17;
     window.game.prestige = 2;
+    window.game.workerEarned = 42;
     window.game.selectedSound = 'none';
     window.game.save({ silent: true });
     return JSON.parse(localStorage.getItem('devopsClicker'));
   });
 
-  expect(savedState.saveVersion).toBe(3);
+  expect(savedState.saveVersion).toBe(4);
   expect(savedState.cycles).toBe(321);
   expect(savedState.totalClicks).toBe(17);
+  expect(savedState.workerEarned).toBe(42);
 
   const exportedPayload = await page.evaluate(() => window.game.createExportPayload());
-  expect(exportedPayload.meta.saveVersion).toBe(3);
+  expect(exportedPayload.meta.saveVersion).toBe(4);
   expect(exportedPayload.meta.game).toBe('devops-clicker');
   expect(exportedPayload.state.cycles).toBe(321);
+  expect(exportedPayload.state.workerEarned).toBe(42);
 
   const restoredState = await page.evaluate(() => {
     const legacySave = {
@@ -53,5 +56,5 @@ test('save, migrate, and reload state', async ({ page }) => {
   expect(restoredState.cycles).toBe(777);
   expect(restoredState.totalClicks).toBe(33);
   expect(restoredState.prestige).toBe(4);
-  expect(restoredState.stored.saveVersion).toBe(3);
+  expect(restoredState.stored.saveVersion).toBe(4);
 });
