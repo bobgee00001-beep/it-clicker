@@ -709,9 +709,9 @@ const SAVE_VERSION = 4;
   <div class="eventlog-header">
     <div class="eventlog-title">Event Log</div>
     <div class="eventlog-filter">
-      <button class="eventlog-filter-btn active" data-filter="all" onclick="game.setEventlogFilter('all')">All</button>
-      <button class="eventlog-filter-btn" data-filter="ticket" onclick="game.setEventlogFilter('ticket')">🎫</button>
-      <button class="eventlog-filter-btn" data-filter="error" onclick="game.setEventlogFilter('error')">⚠️</button>
+      <button class="eventlog-filter-btn active" data-filter="all" onclick="eventLog.setFilter('all')">All</button>
+      <button class="eventlog-filter-btn" data-filter="ticket" onclick="eventLog.setFilter('ticket')">🎫</button>
+      <button class="eventlog-filter-btn" data-filter="error" onclick="eventLog.setFilter('error')">⚠️</button>
     </div>
   </div>
   <div class="eventlog-content" id="eventlogContent">
@@ -722,7 +722,7 @@ const SAVE_VERSION = 4;
   </div>
   <div class="eventlog-footer">
     <span id="eventlogCount">1 Eintrag</span>
-    <span class="eventlog-clear" onclick="game.clearEventlog()">🗑️ Clear</span>
+    <span class="eventlog-clear" onclick="eventLog.clear()">🗑️ Clear</span>
   </div>
 </div>
 
@@ -1130,6 +1130,87 @@ const ACHIEVEMENTS = [
   { id: 'team_lead', name: 'Team Lead', desc: 'Stelle jede Worker-Rolle mindestens einmal ein', check: g => ['intern', 'junior', 'senior', 'staff'].every(id => (g.upgrades[id] || 0) > 0), reward: { type: 'cpsBonus', value: 0.05 }, rewardDesc: '+5% CPS' },
 ];
 
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+class EventLog {
+  constructor(maxEntries = 50) {
+    this.entries = [];
+    this.filter = 'all';
+    this.maxEntries = maxEntries;
+  }
+
+  _categorize(message, type) {
+    if (type === 'danger') return 'error';
+    if (/\b(Ticket|ticket)\b/.test(message)) return 'ticket';
+    if (/\b(Achievement|Erfolg|🏆)\b/.test(message)) return 'achievement';
+    return 'normal';
+  }
+
+  add(message, type = 'normal', category = null) {
+    const entry = {
+      id: Date.now() + Math.random(),
+      timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      message,
+      type,
+      category: category || this._categorize(message, type),
+    };
+    this.entries.unshift(entry);
+    if (this.entries.length > this.maxEntries) {
+      this.entries = this.entries.slice(0, this.maxEntries);
+    }
+    this.render();
+  }
+
+  clear() {
+    this.entries = [];
+    this.render();
+    this.add('Eventlog gelöscht', 'normal');
+  }
+
+  setFilter(filter) {
+    this.filter = filter;
+    document.querySelectorAll('.eventlog-filter-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+    this.render();
+  }
+
+  render() {
+    const container = document.getElementById('eventlogContent');
+    if (!container) return;
+
+    let filtered = this.entries;
+    if (this.filter === 'ticket') {
+      filtered = this.entries.filter(e => e.category === 'ticket');
+    } else if (this.filter === 'error') {
+      filtered = this.entries.filter(e => e.type === 'danger' || e.type === 'warn');
+    }
+
+    container.innerHTML = filtered.map(entry => {
+      const typeClass = entry.type === 'normal' ? 'success' : entry.type;
+      return `
+        <div class="eventlog-entry ${typeClass}" data-id="${entry.id}">
+          <span class="eventlog-timestamp">[${entry.timestamp}]</span>
+          <span class="eventlog-message">${escapeHtml(entry.message)}</span>
+        </div>
+      `;
+    }).join('');
+
+    const countEl = document.getElementById('eventlogCount');
+    if (countEl) {
+      const total = this.entries.length;
+      const showing = filtered.length;
+      countEl.textContent = showing === total ? `${total} Einträge` : `${showing}/${total} Einträge`;
+    }
+  }
+}
+
+const eventLog = new EventLog();
+
 class Game {
   constructor() {
     this.cycles = 0;
@@ -1205,11 +1286,6 @@ class Game {
     this.selectedSound = 'none';
     this.audioInitialized = false;
     
-    // Eventlog system
-    this.eventlog = [];
-    this.eventlogMaxEntries = 50;
-    this.eventlogFilter = 'all';
-    
     this.init();
   }
 
@@ -1241,7 +1317,7 @@ class Game {
     this.renderWorkers();
     this.renderReleaseTrain();
     this.renderObservability();
-    this.renderEventlog();
+    eventLog.render();
     
     // Setze den Welcome-Zeitstempel
     const welcomeTime = document.getElementById('eventlogWelcomeTime');
@@ -1798,20 +1874,37 @@ class Game {
   }
 
   checkAchievements() {
+    const newlyUnlocked = this.evaluateAchievements();
+    this.applyNewAchievements(newlyUnlocked);
+    return newlyUnlocked;
+  }
+
+  evaluateAchievements() {
+    const newlyUnlocked = new Set();
     for (const a of ACHIEVEMENTS) {
       if (this.achievements.has(a.id)) continue;
       const progress = this.getProgress(a);
       this.achievementProgress[a.id] = progress.current;
       if (a.check(this)) {
         this.achievements.add(a.id);
-        // Play achievement sound
-        this.initAudio();
-        this.playSound('achievement');
-        this.toast(`🏆 ${a.name}: ${a.desc} — ${a.rewardDesc}`, 'warn');
-        this.renderAchievements();
-        this.updateDisplay();
+        newlyUnlocked.add(a.id);
       }
     }
+    return newlyUnlocked;
+  }
+
+  applyNewAchievements(newlyUnlocked) {
+    if (!newlyUnlocked || newlyUnlocked.size === 0) return;
+    this.initAudio();
+    this.playSound('achievement');
+    for (const id of newlyUnlocked) {
+      const a = ACHIEVEMENTS.find(x => x.id === id);
+      if (a) {
+        this.toast(`🏆 ${a.name}: ${a.desc} — ${a.rewardDesc}`, 'warn');
+      }
+    }
+    this.renderAchievements();
+    this.updateDisplay();
   }
 
   getProgress(a) {
@@ -1866,11 +1959,11 @@ class Game {
   }
 
   toast(msg, type = 'normal') {
-    // Leite an das Eventlog weiter - kein Toast mehr
-    this.addToEventlog(msg, type);
-    
+    eventLog.add(msg, type);
+
     // Versteckter Toast-Container für Rückwärtskompatibilität
     const container = document.getElementById('toastContainer');
+    if (!container) return;
     const el = document.createElement('div');
     el.className = 'toast';
     el.textContent = msg;
@@ -1878,91 +1971,6 @@ class Game {
     if (type === 'danger') el.style.borderColor = 'var(--danger)';
     container.appendChild(el);
     setTimeout(() => el.remove(), 3000);
-  }
-
-  addToEventlog(message, type = 'normal', category = null) {
-    const timestamp = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    
-    // Kategorie-Mapping für Filter
-    let entryCategory = category;
-    if (!entryCategory) {
-      if (type === 'danger') entryCategory = 'error';
-      else if (message.includes('Ticket') || message.includes('ticket')) entryCategory = 'ticket';
-      else if (message.includes('🏆') || message.includes('Achievement') || message.includes('Erfolg')) entryCategory = 'achievement';
-      else entryCategory = 'normal';
-    }
-    
-    const entry = {
-      id: Date.now() + Math.random(),
-      timestamp,
-      message,
-      type,
-      category: entryCategory
-    };
-    
-    this.eventlog.unshift(entry);
-    
-    // Max Einträge begrenzen
-    if (this.eventlog.length > this.eventlogMaxEntries) {
-      this.eventlog = this.eventlog.slice(0, this.eventlogMaxEntries);
-    }
-    
-    this.renderEventlog();
-  }
-
-  setEventlogFilter(filter) {
-    this.eventlogFilter = filter;
-    
-    // Update Filter-Buttons
-    document.querySelectorAll('.eventlog-filter-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.filter === filter);
-    });
-    
-    this.renderEventlog();
-  }
-
-  renderEventlog() {
-    const container = document.getElementById('eventlogContent');
-    if (!container) return;
-    
-    // Filtere Einträge
-    let filtered = this.eventlog;
-    if (this.eventlogFilter === 'ticket') {
-      filtered = this.eventlog.filter(e => e.category === 'ticket');
-    } else if (this.eventlogFilter === 'error') {
-      filtered = this.eventlog.filter(e => e.type === 'danger' || e.type === 'warn');
-    }
-    
-    // Erstelle HTML
-    container.innerHTML = filtered.map(entry => {
-      const typeClass = entry.type === 'normal' ? 'success' : entry.type;
-      return `
-        <div class="eventlog-entry ${typeClass}" data-id="${entry.id}">
-          <span class="eventlog-timestamp">[${entry.timestamp}]</span>
-          <span class="eventlog-message">${this.escapeHtml(entry.message)}</span>
-        </div>
-      `;
-    }).join('');
-    
-    // Update Counter
-    const countEl = document.getElementById('eventlogCount');
-    if (countEl) {
-      const total = this.eventlog.length;
-      const showing = filtered.length;
-      countEl.textContent = showing === total ? `${total} Einträge` : `${showing}/${total} Einträge`;
-    }
-  }
-
-  clearEventlog() {
-    this.eventlog = [];
-    this.renderEventlog();
-    this.addToEventlog('Eventlog gelöscht', 'normal');
-  }
-
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
   }
 
   renderAudioTab() {
