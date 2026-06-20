@@ -1,7 +1,7 @@
 // Pure, deterministische Game-Engine. KEINE UI-/Framework-Imports.
 // Jede Funktion ist eine reine Transformation des States. Die Engine besitzt
 // das Zeitmodell (tick), die UI interpoliert nur.
-import { SCALE, type GameState, type GeneratorDef, type AchievementDef } from './types';
+import { SCALE, type GameState, type GeneratorDef, type AchievementDef, type TicketType } from './types';
 import {
   GENERATORS,
   UPGRADES,
@@ -13,20 +13,144 @@ import {
   getGenerator,
   getUpgrade,
 } from './config';
+import { workerCpsScaled, isWorker, workerClickRatePerSec, workerTicksForDt } from './workers';
+import { cpsPerTicketBonus } from './itsm';
+import { additiveClickPowerScaled, effectiveClickScaled as clickBoostEffectiveClickScaled } from './clickBoost';
+import {
+  spawnTicket as engineSpawnTicket,
+  updateTickets,
+  updateSev1,
+  checkSev1Threshold,
+  decayCpsPenalty,
+} from './tickets';
+import { createEventLog, addEvent, type EventLog } from './eventLog';
+import { SEV1_THRESHOLD_TICKETS } from './config';
+import {
+  checkPagerDuty,
+  checkMondayMorning,
+  trackFastTicket,
+  trackSpend,
+  trackMaxCyclesNoUpgrades,
+  resetMaxCyclesNoUpgrades,
+  trackMondayClick,
+} from './timegates';
+import { updateReleaseTrain } from './release';
+import { updateObservability } from './observability';
+
+export function resolveTicket(s: GameState, idx: number, nowMs?: number): GameState {
+  if (idx < 0 || idx >= s.tickets.length) return s;
+  const t = s.tickets[idx];
+  const resolveTimeMs =
+    typeof nowMs === 'number' && t.spawnTime > 0 ? Math.max(0, nowMs - t.spawnTime) : FAST_TICKET_THRESHOLD_MS + 1;
+  const reward = t.rewardScaled * BigInt(Math.max(1, Math.trunc(s.multiplier)));
+  const nextTickets = [...s.tickets];
+  nextTickets.splice(idx, 1);
+  const resolved: GameState = {
+    ...s,
+    cyclesScaled: s.cyclesScaled + reward,
+    totalEarnedScaled: s.totalEarnedScaled + reward,
+    tickets: nextTickets,
+    ticketsResolved: s.ticketsResolved + 1,
+    lastTicketSpawn: s.lastTicketSpawn,
+  };
+  const tracked = trackFastTicket(resolved, resolveTimeMs);
+  return withResolvedEvent(tracked, t);
+}
+
+const FAST_TICKET_THRESHOLD_MS = 2000;
+
+/** Ticket entfernen mit CPS-Penalty (expliziter Expire, falls nötig). */
+export function expireTicket(s: GameState, idx: number): GameState {
+  if (idx < 0 || idx >= s.tickets.length) return s;
+  const t = s.tickets[idx];
+  const nextTickets = [...s.tickets];
+  nextTickets.splice(idx, 1);
+  const penalized: GameState = {
+    ...s,
+    tickets: nextTickets,
+    ticketsExpired: s.ticketsExpired + 1,
+    cpsPenalty: 0.8,
+    cpsPenaltyTimer: 30,
+    lastTicketSpawn: s.lastTicketSpawn,
+  };
+  return withExpiredEvent(penalized, 1);
+}
+export { createEventLog, addEvent, setFilter, clear, filteredEntries, eventCount } from './eventLog';
+export type { EventLog, GameEvent, Severity, EventCategory } from './eventLog';
 
 export function createInitialState(nowMs: number): GameState {
   return {
     cyclesScaled: 0n,
     totalEarnedScaled: 0n,
-    clickPowerScaled: 1n * SCALE, // 1 Cycle pro Klick (Basis, vor Upgrades)
+    workerEarnedScaled: 0n,
+    clickPowerScaled: 1n * SCALE,
     generators: {},
     upgrades: {},
+    upgradesEverBought: false,
     achievements: {},
     clicks: 0n,
+    sessionClicks: 0,
+    prestige: 0,
+    prestigePoints: 0,
+    multiplier: 1,
+    tickets: [],
+    ticketsResolved: 0,
+    ticketsExpired: 0,
+    sev1Active: false,
+    sev1Timer: 0,
+    sev1Survived: false,
+    cpsPenalty: 1,
+    cpsPenaltyTimer: 0,
+    achievementProgress: {},
+    p1AutoClosed: 0,
+    fastTickets: 0,
+    maxSpendIn60s: 0n,
+    spendEvents: [],
+    allCategoriesMaxed: false,
+    maxSimultaneousP1: 0,
+    mondayClicks: 0,
+    passiveEarnedSinceLastClick: 0n,
+    pagerDutyTriggered: false,
+    pagerDutyDate: null,
+    legacyCodeTriggered: false,
+    maxCyclesWithoutUpgrades: 0n,
+    deploysStarted: 0,
+    successfulDeploys: 0,
+    failedDeploys: 0,
+    lastDeployAt: null,
+    releaseStatus: 'idle',
+    releaseStageIndex: -1,
+    releaseStageTimer: 0,
+    releaseDeployBonusTimer: 0,
+    releaseDeployBonusMultiplier: 1,
+    releaseMessage: 'Change Window bereit.',
+    rollbacksPerformed: 0,
+    lastRollbackAt: null,
+    errorBudget: 100,
+    observabilityScore: 82,
+    activeIncidents: 0,
+    uptime: 99.95,
+    errorRate: 0.05,
+    monitoringTimer: 0,
+    rollbackAvailable: false,
+    cleanMonitoringWindows: 0,
+    lastDeploymentQuality: 'No deploys yet',
+    observabilityMessage: 'Keine aktive Release-Beobachtung.',
+    lastReleaseEvidence: 'Noch keine Release-Evidenz.',
+    masterVolume: 1.0,
+    muted: false,
+    selectedSound: 'none',
+    sessionStart: nowMs,
+    sessionPlayTime: 0,
+    lastOnline: 0,
+    lastTick: nowMs,
+    lastTicketSpawn: nowMs,
+    currentTab: 'hardware',
     shares: 0n,
     prodRemainder: 0n,
     lastSavedMs: nowMs,
-    version: ENGINE_VERSION,
+    version: ENGINE_VERSION as 5,
+    eventLog: createEventLog(),
   };
 }
 
@@ -61,6 +185,10 @@ function mulReduce(r: Rational, num: bigint, den: bigint): Rational {
   return { num: n / g, den: d / g };
 }
 
+function divFloor(num: bigint, den: bigint): bigint {
+  return num / den;
+}
+
 // Komponiert alle gekauften Upgrade-Faktoren nach Wirkungs-Scope. factor wird
 // je Level multiplikativ angewandt (Phase 2a: Level 0/1; gestaffelt später).
 function multipliers(s: GameState): {
@@ -71,6 +199,8 @@ function multipliers(s: GameState): {
   let global: Rational = { num: 1n, den: 1n };
   let click: Rational = { num: 1n, den: 1n };
   const perGen: Record<string, Rational> = {};
+  // Multiplikator-Komposition ist kommutativ => Reihenfolge-unabhängig.
+  // Per-Generator-Upgrades (inkl. Worker) nutzen die perGen-Rational.
   for (const u of UPGRADES) {
     const level = upgradeLevel(s, u.id);
     for (let i = 0; i < level; i++) {
@@ -78,10 +208,10 @@ function multipliers(s: GameState): {
         global = mulReduce(global, u.factorNum, u.factorDen);
       } else if (u.target.kind === 'click') {
         click = mulReduce(click, u.factorNum, u.factorDen);
-      } else {
+      } else if (u.target.kind === 'generator' && !isWorker(u.target.genId)) {
         const gid = u.target.genId;
         perGen[gid] = mulReduce(perGen[gid] ?? { num: 1n, den: 1n }, u.factorNum, u.factorDen);
-      }
+      } // clickAdd / itsm / worker-generators werden separat behandelt.
     }
   }
   // Freigeschaltete Achievements: permanenter Bonus, gleiche Rational-Komposition.
@@ -91,10 +221,10 @@ function multipliers(s: GameState): {
       global = mulReduce(global, a.factorNum, a.factorDen);
     } else if (a.target.kind === 'click') {
       click = mulReduce(click, a.factorNum, a.factorDen);
-    } else {
+    } else if (a.target.kind === 'generator' && !isWorker(a.target.genId)) {
       const gid = a.target.genId;
       perGen[gid] = mulReduce(perGen[gid] ?? { num: 1n, den: 1n }, a.factorNum, a.factorDen);
-    }
+    } // clickAdd / itsm / worker-achievements werden separat behandelt.
   }
   // Prestige: jede Share = +2% global, als exakter Rational-Faktor.
   if (s.shares > 0n) {
@@ -120,6 +250,58 @@ function achievementMet(s: GameState, a: AchievementDef): boolean {
       return s.shares >= c.atLeast;
     case 'clicks':
       return s.clicks >= c.atLeast;
+    case 'ticketsResolved':
+      return s.ticketsResolved >= c.atLeast;
+    case 'ticketsExpired':
+      return s.ticketsExpired >= c.atLeast;
+    case 'fastTickets':
+      return s.fastTickets >= c.atLeast;
+    case 'p1AutoClosed':
+      return s.p1AutoClosed >= c.atLeast;
+    case 'mondayClicks':
+      return s.mondayClicks >= c.atLeast;
+    case 'sessionClicks':
+      return s.sessionClicks >= c.atLeast;
+    case 'maxCyclesNoUpgrades':
+      return s.maxCyclesWithoutUpgrades >= c.atLeastScaled;
+    case 'maxSimultaneousP1':
+      return s.maxSimultaneousP1 >= c.atLeast;
+    case 'maxSpendIn60s':
+      return s.maxSpendIn60s >= c.atLeastScaled;
+    case 'successfulDeploys':
+      return s.successfulDeploys >= c.atLeast;
+    case 'failedDeploys':
+      return s.failedDeploys >= c.atLeast;
+    case 'rollbacksPerformed':
+      return s.rollbacksPerformed >= c.atLeast;
+    case 'cleanMonitoringWindows':
+      return s.cleanMonitoringWindows >= c.atLeast;
+    case 'prestigeCount':
+      return s.prestige >= c.atLeast;
+    case 'anyUpgradeBought':
+      return s.upgradesEverBought;
+    case 'pagerDutyTriggered':
+      return s.pagerDutyTriggered;
+    case 'legacyCodeTriggered':
+      return s.legacyCodeTriggered;
+    case 'allCategoriesMaxed':
+      return s.allCategoriesMaxed;
+    case 'sev1Survived':
+      return s.sev1Survived;
+    case 'migrationMaster':
+      return s.passiveEarnedSinceLastClick >= 100_000n * SCALE && s.totalEarnedScaled >= 1_000_000n * SCALE;
+    case 'unicornStartup':
+      return s.totalEarnedScaled >= 10_000_000n * SCALE && s.sessionPlayTime < 30 * 60 * 1000;
+    case 'rollbackReady':
+      return s.rollbacksPerformed >= 1 || s.cleanMonitoringWindows >= 1;
+    case 'teamLead': {
+      for (const wid of c.workerIds) {
+        if ((s.upgrades[wid] ?? 0) < 1) return false;
+      }
+      return true;
+    }
+    default:
+      return false;
   }
 }
 
@@ -153,38 +335,137 @@ export function nextCostScaled(def: GeneratorDef, owned: number): bigint {
 }
 
 // Passive Produktion pro Sekunde (scaled). Nur das ist offline-fähig (Whitelist).
-// KANONISCH: ein einziger Floor PRO GENERATOR (Sparring #7 bestätigt) —
+// KANONISCH: ein einziger Floor PRO GENERATOR —
 //   effRate_g = floor( baseRate_g * count_g * globalNum * genNum / (globalDen * genDen) )
 // Multiplikation VOR Division, eine Division je Generator. Reihenfolge-unabhängig.
 export function productionPerSecScaled(s: GameState): bigint {
   const m = multipliers(s);
   let rate = 0n;
   for (const def of GENERATORS) {
+    // Worker-Generatoren laufen als Auto-Clicker, nicht als passive Produktion.
+    if (isWorker(def.id)) continue;
     const count = BigInt(genCount(s, def.id));
     if (count === 0n) continue;
     const g = m.perGen[def.id] ?? { num: 1n, den: 1n };
-    const num = def.baseRateScaled * count * m.global.num * g.num;
-    const den = m.global.den * g.den;
-    rate += num / den; // ein Floor pro Generator
+    // Zusammengesetzte Rationale: global * perGen.
+    const composedNum = m.global.num * g.num;
+    const composedDen = m.global.den * g.den;
+    // Einzelner Floor pro Generator: floor(baseRate * count * composedNum / composedDen).
+    const num = def.baseRateScaled * count * composedNum;
+    const den = composedDen;
+    rate += num / den;
+  }
+  // ITSM-Autoticket-Bonus: +1% CPS pro Ticket × Quellen.
+  const autoTicketBonus = cpsPerTicketBonus(s);
+  if (autoTicketBonus !== 0) {
+    const bonusNum = BigInt(Math.round(autoTicketBonus * 10000));
+    rate = (rate * bonusNum) / 10000n;
   }
   return rate;
 }
 
-// Effektive Klick-Power = floor( Basis * clickNum / clickDen ). Basis bleibt im
-// State; der Multiplikator wird abgeleitet (keine mutierte Effektiv-Zahl).
-export function effectiveClickScaled(s: GameState): bigint {
-  const m = multipliers(s);
-  return (s.clickPowerScaled * m.click.num) / m.click.den;
+// Worker-CPS werden additiv zur passiven Produktion akkumuliert. Sie sind
+// online-only (da sie von der aktuellen Click-Power abhängen) und fließen
+// direkt in tick(), nicht in productionPerSecScaled() (offline-Whitelist).
+function productionPlusWorkerCps(s: GameState, clickPower: bigint): bigint {
+  return productionPerSecScaled(s) + workerCpsScaled(s, clickPower);
 }
 
-export function click(s: GameState): GameState {
+// Effektive Klick-Power = (Basis + Additive) × Click-Multiplikatoren.
+// Basis bleibt im State; der Multiplikator wird abgeleitet (keine mutierte
+// Effektiv-Zahl). Click-Additives und -Multiplikatoren werden in
+// engine/clickBoost.ts verwaltet.
+export function effectiveClickScaled(s: GameState): bigint {
+  return clickBoostEffectiveClickScaled(s);
+}
+
+export function click(s: GameState, now?: Date): GameState {
   const gain = effectiveClickScaled(s);
-  return evaluateAchievements({
+  const clicked: GameState = {
     ...s,
     cyclesScaled: s.cyclesScaled + gain,
     totalEarnedScaled: s.totalEarnedScaled + gain,
     clicks: s.clicks + 1n,
-  });
+    sessionClicks: s.sessionClicks + 1,
+  };
+  const tracked = trackMondayClick(clicked, now ?? new Date(0));
+  return evaluateAchievements(tracked);
+}
+
+/** Öffentlicher Ticket-Spawn inkl. EventLog-Eintrag + SEV1-Threshold-Check. */
+export function spawnTicket(s: GameState, rng?: () => number): GameState {
+  const prevCount = s.tickets.length;
+  let next = engineSpawnTicket(s, rng);
+  if (next.tickets.length > prevCount) {
+    const t = next.tickets[next.tickets.length - 1];
+    next = {
+      ...next,
+      eventLog: addEvent(
+        next.eventLog,
+        `${t.title} (${t.type.toUpperCase()}) eingegangen.`,
+        t.type === 'p1' ? 'critical' : t.type === 'p2' ? 'warning' : 'info',
+        'ticket',
+        { ticketId: t.id, type: t.type },
+      ),
+    };
+  }
+  return checkSev1Threshold(next);
+}
+
+function withExpiredEvent(s: GameState, count: number): GameState {
+  if (count === 0 || !s.eventLog) return s;
+  return {
+    ...s,
+    eventLog: addEvent(
+      s.eventLog,
+      `${count} Ticket(s) abgelaufen (SLA-Breach).`,
+      'critical',
+      'ticket',
+      { expiredCount: count },
+    ),
+  };
+}
+
+function withResolvedEvent(s: GameState, t: { title: string; type: TicketType }): GameState {
+  if (!s.eventLog) return s;
+  return {
+    ...s,
+    eventLog: addEvent(
+      s.eventLog,
+      `${t.title} (${t.type.toUpperCase()}) gelöst.`,
+      'success',
+      'ticket',
+      { type: t.type },
+    ),
+  };
+}
+
+function withSev1Event(s: GameState): GameState {
+  if (!s.eventLog) return s;
+  return {
+    ...s,
+    eventLog: addEvent(
+      s.eventLog,
+      'SEV1-Kaskade ausgelöst! Zu viele offene Tickets.',
+      'critical',
+      'sev1',
+      { openTickets: s.tickets.length },
+    ),
+  };
+}
+
+function withSev1RecoveredEvent(s: GameState): GameState {
+  if (!s.eventLog) return s;
+  return {
+    ...s,
+    eventLog: addEvent(
+      s.eventLog,
+      'SEV1-Kaskade unter Kontrolle.',
+      'success',
+      'sev1',
+      { openTickets: s.tickets.length },
+    ),
+  };
 }
 
 export function canAfford(s: GameState, id: string): boolean {
@@ -193,37 +474,43 @@ export function canAfford(s: GameState, id: string): boolean {
   return s.cyclesScaled >= nextCostScaled(def, genCount(s, id));
 }
 
-export function buyGenerator(s: GameState, id: string): GameState {
+export function buyGenerator(s: GameState, id: string, nowMs?: number): GameState {
   const def = getGenerator(id);
   if (!def) return s;
   const owned = genCount(s, id);
   const cost = nextCostScaled(def, owned);
   if (s.cyclesScaled < cost) return s;
-  return evaluateAchievements({
+  const bought: GameState = {
     ...s,
     cyclesScaled: s.cyclesScaled - cost,
     generators: { ...s.generators, [id]: owned + 1 },
-  });
+    upgradesEverBought: true,
+  };
+  const tracked = trackSpend(bought, cost, nowMs ?? 0);
+  return evaluateAchievements(tracked);
 }
 
 export function canAffordUpgrade(s: GameState, id: string): boolean {
   const def = getUpgrade(id);
   if (!def) return false;
-  if (upgradeLevel(s, id) >= def.maxLevel) return false; // schon maximal
+  if (upgradeLevel(s, id) >= def.maxLevel) return false;
   return s.cyclesScaled >= def.costScaled;
 }
 
-export function buyUpgrade(s: GameState, id: string): GameState {
+export function buyUpgrade(s: GameState, id: string, nowMs?: number): GameState {
   const def = getUpgrade(id);
   if (!def) return s;
   const level = upgradeLevel(s, id);
-  if (level >= def.maxLevel) return s; // No-Op: bereits maximal
-  if (s.cyclesScaled < def.costScaled) return s; // No-Op: zu teuer
-  return evaluateAchievements({
+  if (level >= def.maxLevel) return s;
+  if (s.cyclesScaled < def.costScaled) return s;
+  const bought: GameState = {
     ...s,
     cyclesScaled: s.cyclesScaled - def.costScaled,
     upgrades: { ...s.upgrades, [id]: level + 1 },
-  });
+  };
+  const withSpend = trackSpend(bought, def.costScaled, nowMs ?? 0);
+  const withReset = resetMaxCyclesNoUpgrades(withSpend);
+  return evaluateAchievements({ ...withReset, upgradesEverBought: true });
 }
 
 // Kanonische Produktions-Akkumulation mit Rest-Übertrag. PARTITIONSUNABHÄNGIG:
@@ -242,25 +529,67 @@ export function accrue(
 }
 
 // Produktion über dtMs auf den State anwenden (mit Übertrag). Intern für tick/offline.
-function produce(s: GameState, dtMs: number): { state: GameState; gainedScaled: bigint } {
-  const rate = productionPerSecScaled(s); // scaled / s
+function produce(s: GameState, dtMs: number, includeWorkerCps: boolean): { state: GameState; gainedScaled: bigint } {
+  const clickPower = effectiveClickScaled(s);
+  const rate = includeWorkerCps
+    ? productionPerSecScaled(s) + workerCpsScaled(s, clickPower)
+    : productionPerSecScaled(s); // scaled / s
   const { gainScaled, remainder } = accrue(rate, dtMs, s.prodRemainder);
+  const workerEarned = includeWorkerCps ? (workerCpsScaled(s, clickPower) * BigInt(dtMs)) / 1000n : 0n;
   return {
     state: {
       ...s,
       cyclesScaled: s.cyclesScaled + gainScaled,
       totalEarnedScaled: s.totalEarnedScaled + gainScaled,
+      workerEarnedScaled: s.workerEarnedScaled + workerEarned,
       prodRemainder: remainder,
     },
     gainedScaled: gainScaled,
   };
 }
 
-// Sim um dtMs vorrücken. Deterministisch gegeben (state, dtMs). Nur passive Produktion.
+// Sim um dtMs vorrücken. Deterministisch gegeben (state, dtMs). Passive Produktion + Worker-CPS + Tickets + SEV1.
 // Kein Early-Return bei gain==0: der Übertrag muss IMMER fortgeschrieben werden.
-export function tick(s: GameState, dtMs: number): GameState {
+export function tick(s: GameState, dtMs: number, nowMs?: number): GameState {
   if (dtMs <= 0) return s;
-  return evaluateAchievements(produce(s, dtMs).state); // Achievement-Eval: NUR online
+  let state = produce(s, dtMs, true).state;
+  // Ticket-Lebenszyklus (SLA-Decay, Auto-Close, Expire).
+  const preTicketsCount = state.tickets.length;
+  state = updateTickets(state, dtMs);
+  const expiredCount = preTicketsCount - state.tickets.length;
+  if (expiredCount > 0) {
+    state = withExpiredEvent(state, expiredCount);
+  }
+  // SEV1-Threshold und Timer.
+  const preSev1 = state.sev1Active;
+  state = checkSev1Threshold(state);
+  if (state.sev1Active && !preSev1) {
+    state = withSev1Event(state);
+  }
+  state = updateSev1(state, dtMs);
+  if (!state.sev1Active && preSev1) {
+    state = withSev1RecoveredEvent(state);
+  }
+  // CPS-Penalty-Decay.
+  state = decayCpsPenalty(state, dtMs);
+  // Timegates (PagerDuty, Monday-Morning-Reset).
+  const now = typeof nowMs === 'number' ? new Date(nowMs) : new Date(0);
+  state = checkPagerDuty(state, now);
+  state = checkMondayMorning(state, now);
+  state = trackMaxCyclesNoUpgrades(state);
+  // Release Train + Observability.
+  state = updateReleaseTrain(state, dtMs);
+  state = updateObservability(state, dtMs);
+  // Deploy-Success Bonus: während releaseDeployBonusTimer läuft bleibt der
+  // Multiplikator auf 1.5; sonst wird er explizit auf 1.0 zurückgesetzt.
+  if (state.releaseStatus === 'success' && state.releaseDeployBonusTimer > 0) {
+    if (state.releaseDeployBonusMultiplier !== 1.5) {
+      state = { ...state, releaseDeployBonusMultiplier: 1.5 };
+    }
+  } else if (state.releaseDeployBonusMultiplier !== 1) {
+    state = { ...state, releaseDeployBonusMultiplier: 1 };
+  }
+  return evaluateAchievements(state);
 }
 
 // Offline-Earnings: NUR passive Produktion (harte Whitelist aus DESIGN.md),
@@ -271,7 +600,7 @@ export function applyOffline(
   nowMs: number,
 ): { state: GameState; gainedScaled: bigint; elapsedMs: number } {
   const elapsedMs = Math.max(0, Math.min(Math.trunc(nowMs - s.lastSavedMs), OFFLINE_CAP_MS));
-  const { state: produced, gainedScaled } = produce(s, elapsedMs);
+  const { state: produced, gainedScaled } = produce(s, elapsedMs, false);
   return { state: { ...produced, lastSavedMs: nowMs }, gainedScaled, elapsedMs };
 }
 
@@ -322,6 +651,6 @@ export function applyPrestige(s: GameState): GameState {
     achievements: s.achievements, // PERMANENT über Prestige (nie zurückgesetzt)
     clicks: s.clicks, // Lifetime-Klicks bleiben
     shares: s.shares + gain,
-    version: s.version,
+    version: ENGINE_VERSION as 5,
   });
 }

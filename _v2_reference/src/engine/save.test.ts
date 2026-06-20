@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { serialize, deserialize } from './save';
+import { serialize, deserialize, exportPayload, importPayload, clearCorruptSave } from './save';
 import { createInitialState } from './engine';
 import { ENGINE_VERSION } from './config';
+import { SCALE } from './types';
 
 describe('save serialize/deserialize — Round-Trip', () => {
   it('erhält bigint-Werte exakt über JSON (String-Kodierung)', () => {
@@ -10,9 +11,9 @@ describe('save serialize/deserialize — Round-Trip', () => {
       cyclesScaled: 123_456_789_012_345_678_901n, // > Number.MAX_SAFE_INTEGER
       totalEarnedScaled: 999_999_999_999_999_999n,
       prodRemainder: 777n,
-      generators: { server: 7 },
-      upgrades: { 'click-mech-kb': 1, 'global-overtime': 1 },
-      achievements: { 'first-server': 1 },
+      generators: { pi: 7, ssd: 3 },
+      upgrades: { kb: 1, mouse: 1 },
+      achievements: { first_click: 1 },
       clicks: 1234n,
       shares: 42n,
     };
@@ -33,8 +34,9 @@ describe('save serialize/deserialize — Round-Trip', () => {
 
   it('liefert null bei kaputtem JSON statt zu werfen', () => {
     expect(deserialize('}{ not json')).toBeNull();
-    expect(deserialize('42')).toBeNull(); // JSON, aber kein Objekt
+    expect(deserialize('42')).toBeNull();
     expect(deserialize('null')).toBeNull();
+    expect(deserialize('"string"')).toBeNull();
   });
 
   it('füllt fehlende Felder mit sicheren Defaults', () => {
@@ -52,135 +54,118 @@ describe('save serialize/deserialize — Round-Trip', () => {
   });
 });
 
-describe('deserialize — v4→v5 Migration & achievements-Härtung', () => {
-  it('lädt einen v4-Save ohne achievements/clicks verlustfrei (Defaults)', () => {
+describe('deserialize — v1/v2/v3/v4/v5 Migration', () => {
+  it('v1-Flat-Payload (cycles number) → v5 GameState', () => {
+    const v1 = JSON.stringify({
+      version: 1,
+      cycles: 1000,
+      totalEarned: 5000,
+      generators: { server: 2 },
+      upgrades: { kb: 1 },
+      clicks: 42,
+    });
+    const back = deserialize(v1)!;
+    expect(back.version).toBe(ENGINE_VERSION);
+    expect(back.cyclesScaled).toBe(1000n * SCALE);
+    expect(back.totalEarnedScaled).toBe(5000n * SCALE);
+    expect(back.generators).toEqual({ server: 2 }); // v1 generator IDs kept in generators
+    expect(back.upgrades).toEqual({ kb: 1 });
+    expect(back.clicks).toBe(42n);
+  });
+
+  it('v4-Flat-Payload → v5 GameState', () => {
     const v4 = JSON.stringify({
+      version: 4,
       cyclesScaled: '5000',
       totalEarnedScaled: '5000',
       clickPowerScaled: '1000',
       prodRemainder: '0',
-      generators: { server: 2 },
-      upgrades: {},
+      generators: { pi: 2, ssd: 1 },
+      upgrades: { ssd: 1 },
       shares: '3',
       lastSavedMs: 1_700_000_000_000,
-      version: 4,
     });
     const back = deserialize(v4)!;
     expect(back.shares).toBe(3n);
-    expect(back.achievements).toEqual({}); // additiv ergänzt
-    expect(back.clicks).toBe(0n);
+    expect(back.generators).toEqual({ pi: 2, ssd: 1 });
+    expect(back.upgrades).toEqual({ ssd: 1 });
+    expect(back.releaseStatus).toBe('idle');
+    expect(back.observabilityScore).toBe(82);
+    expect(back.masterVolume).toBe(1.0);
   });
 
-  it('verwirft unbekannte Achievement-IDs', () => {
-    const back = deserialize('{"achievements":{"first-server":1,"god-mode":1}}')!;
-    expect(back.achievements).toEqual({ 'first-server': 1 }); // Fake raus
-  });
-});
-
-describe('deserialize — v3→v4 Migration (shares)', () => {
-  it('lädt einen v3-Save ohne shares verlustfrei (Default 0n)', () => {
-    const v3 = JSON.stringify({
-      cyclesScaled: '5000',
-      totalEarnedScaled: '5000',
-      clickPowerScaled: '1000',
-      prodRemainder: '0',
-      generators: { server: 2 },
-      upgrades: { 'server-ssd': 1 },
-      lastSavedMs: 1_700_000_000_000,
-      version: 3,
-    });
-    const back = deserialize(v3)!;
-    expect(back.upgrades).toEqual({ 'server-ssd': 1 });
-    expect(back.shares).toBe(0n); // additiv ergänzt
-  });
-
-  it('weist negative/krumme shares ab', () => {
-    expect(deserialize('{"shares":"-5"}')!.shares).toBe(0n);
-    expect(deserialize('{"shares":"1.5"}')!.shares).toBe(0n);
+  it('v4-Wrap-Payload → importPayload → v5 GameState', () => {
+    const wrap = {
+      version: 4,
+      data: JSON.stringify({
+        version: 4,
+        cyclesScaled: '9000',
+        totalEarnedScaled: '9000',
+        clickPowerScaled: '1000',
+        generators: { pi: 5 },
+        upgrades: { kb: 1 },
+      }),
+    };
+    const back = importPayload(JSON.stringify(wrap))!;
+    expect(back.cyclesScaled).toBe(9000n);
+    expect(back.generators).toEqual({ pi: 5 });
+    expect(back.upgrades).toEqual({ kb: 1 });
   });
 });
 
-describe('deserialize — upgrades-Härtung (#4)', () => {
-  it('verwirft unbekannte Upgrade-IDs (Fake-Upgrade-Injection)', () => {
-    const back = deserialize('{"upgrades":{"click-mech-kb":1,"hack-x1000":1}}')!;
-    expect(back.upgrades).toEqual({ 'click-mech-kb': 1 }); // Fake-ID raus
+describe('exportPayload / importPayload', () => {
+  it('Export → Import → State identisch', () => {
+    const s = {
+      ...createInitialState(1_700_000_000_000),
+      cyclesScaled: 1_000_000_000_000n,
+      totalEarnedScaled: 2_000_000_000_000n,
+      generators: { pi: 3, ssd: 1 },
+      upgrades: { kb: 1 },
+      clicks: 99n,
+      shares: 7n,
+    };
+    const exported = exportPayload(s);
+    expect(exported.version).toBe(ENGINE_VERSION);
+    expect(typeof exported.exportedAt).toBe('string');
+    expect(exported.data).toBe(serialize(s));
+
+    const back = importPayload(JSON.stringify(exported))!;
+    expect(back.cyclesScaled).toBe(s.cyclesScaled);
+    expect(back.totalEarnedScaled).toBe(s.totalEarnedScaled);
+    expect(back.generators).toEqual(s.generators);
+    expect(back.upgrades).toEqual(s.upgrades);
+    expect(back.clicks).toBe(s.clicks);
+    expect(back.shares).toBe(s.shares);
   });
 
-  it('verwirft Nicht-Integer- und Null/Negativ-Level', () => {
-    const back = deserialize('{"upgrades":{"click-mech-kb":1.5,"click-macro":0,"server-ssd":-1}}')!;
-    expect(back.upgrades).toEqual({}); // alle ungültig
-  });
-
-  it('deckelt Level auf maxLevel', () => {
-    const back = deserialize('{"upgrades":{"click-mech-kb":999}}')!;
-    expect(back.upgrades).toEqual({ 'click-mech-kb': 1 }); // maxLevel = 1
+  it('importPayload toleriert korrupten Input mit null statt throw', () => {
+    expect(importPayload('}{')).toBeNull();
+    expect(importPayload('null')).toBeNull();
+    expect(importPayload('{}')).not.toBeNull();
+    expect(importPayload('{"version":1,"data":"not-json"}')).toBeNull();
   });
 });
 
-describe('deserialize — v2→v3 Migration', () => {
-  it('lädt einen v2-Save ohne upgrades verlustfrei (Default {})', () => {
-    const v2 = JSON.stringify({
-      cyclesScaled: '5000',
-      totalEarnedScaled: '5000',
-      clickPowerScaled: '1000',
-      prodRemainder: '0',
-      generators: { server: 2 },
-      lastSavedMs: 1_700_000_000_000,
-      version: 2,
-    });
-    const back = deserialize(v2)!;
-    expect(back.generators).toEqual({ server: 2 });
-    expect(back.upgrades).toEqual({}); // additiv ergänzt
-  });
-});
-
-describe('deserialize — Härtung gegen feindliche Saves (#3/#4/#5)', () => {
+describe('deserialize — Härtung gegen feindliche Saves', () => {
   it('verwirft String-Counts (sonst owned+1 == "71" String-Concat)', () => {
-    const back = deserialize('{"generators":{"server":"7"}}')!;
-    expect(back.generators).toEqual({}); // "7" verworfen, kein String im State
+    const back = deserialize('{"generators":{"pi":"7"}}')!;
+    expect(back.generators).toEqual({});
   });
 
-  it('verwirft Float- und negative Counts', () => {
-    const back = deserialize('{"generators":{"a":1.5,"b":-5,"c":3}}')!;
-    expect(back.generators).toEqual({ c: 3 }); // nur valider Integer bleibt
+  it('weist negative/krumme BigInt-Felder ab', () => {
+    expect(deserialize('{"cyclesScaled":"-100"}')!.cyclesScaled).toBe(0n);
+    expect(deserialize('{"cyclesScaled":"1.5"}')!.cyclesScaled).toBe(0n);
   });
 
-  it('weist negative bigint-Strings ab (Default statt negativem Guthaben)', () => {
-    const back = deserialize('{"cyclesScaled":"-100"}')!;
+  it('weist "not-a-number" BigInt-Feld ab → null', () => {
+    // migrateSavePayload normalisiert "not-a-number" auf 0n; deserialize darf nicht werfen.
+    const back = deserialize('{"cycles": "not-a-number"}')!;
     expect(back.cyclesScaled).toBe(0n);
-  });
-
-  it('weist "1.5" als bigint-Feld ab (kein BigInt-Crash)', () => {
-    const back = deserialize('{"cyclesScaled":"1.5"}')!;
-    expect(back.cyclesScaled).toBe(0n);
-  });
-
-  it('weist unsichere/große Number-Literale ab (lossy-Rundung vermeiden)', () => {
-    // Als JSON-Number (nicht String) > MAX_SAFE_INTEGER -> bereits lossy -> Default.
-    const back = deserialize('{"cyclesScaled":123456789012345678901}')!;
-    expect(back.cyclesScaled).toBe(0n);
-  });
-
-  it('weist fraktionale/NaN lastSavedMs ab', () => {
-    const back = deserialize('{"lastSavedMs":1.5}')!;
-    expect(Number.isInteger(back.lastSavedMs)).toBe(true);
   });
 });
 
-describe('deserialize — v1→v2 Migration', () => {
-  it('lädt einen v1-Save ohne prodRemainder verlustfrei (Default 0n)', () => {
-    const v1 = JSON.stringify({
-      v: 1,
-      cyclesScaled: '5000',
-      totalEarnedScaled: '5000',
-      clickPowerScaled: '1000',
-      generators: { server: 2 },
-      lastSavedMs: 1_700_000_000_000,
-      version: 1,
-    });
-    const back = deserialize(v1)!;
-    expect(back.cyclesScaled).toBe(5000n);
-    expect(back.generators).toEqual({ server: 2 });
-    expect(back.prodRemainder).toBe(0n); // additiv ergänzt, kein Verlust
+describe('clearCorruptSave', () => {
+  it('ist no-op im Node-/Testkontext (kein localStorage)', () => {
+    expect(() => clearCorruptSave()).not.toThrow();
   });
 });

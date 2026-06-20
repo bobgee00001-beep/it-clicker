@@ -272,6 +272,8 @@ export const AI_UPGRADES: UpgradeDef[] = GENERATORS.filter((g) =>
 ).map(makeGeneratorUpgrade);
 
 export const CLICK_UPGRADES: UpgradeDef[] = [
+  UPGRADE_KB,
+  UPGRADE_MOUSE,
   {
     id: 'click-mech-kb',
     name: 'Mechanical Keyboard',
