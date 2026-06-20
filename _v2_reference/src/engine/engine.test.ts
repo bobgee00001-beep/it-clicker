@@ -167,7 +167,21 @@ describe('applyOffline', () => {
   });
 
   it('closed-form == Summe äquivalenter Ticks (kein Float-Vorteil/-Nachteil)', () => {
-    const s: GameState = { ...createInitialState(0), generators: { server: 2 }, lastSavedMs: 0 };
+    const s: GameState = {
+      ...createInitialState(0),
+      generators: { server: 2 },
+      lastSavedMs: 0,
+      // Freigeschaltete Achievements vorab setzen, damit tick() (Online-Transition)
+      // keine neuen permanenten Multiplikatoren mehr freischaltet. So vergleichen
+      // wir ausschließlich passive Produktion über 3600 identische 1s-Ticks.
+      achievements: {
+        'first_click': 1,
+        'first-server': 1,
+        'hundred': 1,
+        'shadow_it': 1,
+        'thousand': 1,
+      },
+    };
     const dt = 3_600_000; // 1h, unter Cap
     const offlineGain = applyOffline(s, dt).gainedScaled;
 

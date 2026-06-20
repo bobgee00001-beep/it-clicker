@@ -15,8 +15,8 @@ import {
 } from '../engine/config';
 
 describe('Stage 1: Content & Static Config', () => {
-  it('exports exactly 24 UpgradeDefs', () => {
-    expect(UPGRADES.length).toBe(24);
+  it('exports exactly 26 UpgradeDefs', () => {
+    expect(UPGRADES.length).toBe(26);
   });
 
   it('exports exactly 32 AchievementDefs', () => {

@@ -1,10 +1,16 @@
 import { defineConfig } from 'vitest/config';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
 
-// Engine-Tests laufen in reinem Node-Environment — kein DOM, kein Svelte.
-// Die deterministische Engine ist framework-frei; das spiegeln wir hier.
 export default defineConfig({
+  plugins: [svelte({ compilerOptions: { generate: 'client' } })],
+  resolve: {
+    conditions: ['browser', 'default'],
+  },
   test: {
     environment: 'node',
+    environmentMatchGlobs: [['src/ui/**/*.test.ts', 'jsdom']],
+    globals: true,
+    setupFiles: ['./vitest-setup.ts'],
     include: ['src/**/*.test.ts'],
   },
 });
