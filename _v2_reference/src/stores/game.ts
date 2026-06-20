@@ -1,82 +1,235 @@
-// View-Brücke zwischen Engine und Svelte. ENTHÄLT KEINE SPIEL-LOGIK
-// (Invariante aus DESIGN.md) — sie hält nur den aktuellen Engine-Snapshot,
-// leitet Aktionen an die Engine weiter und treibt den Tick.
-import { writable } from 'svelte/store';
+// Svelte-Store-Brücke: hält den GameState, treibt Tick, Auto-Save, Export/Import/Reset.
+import { writable, type Readable } from 'svelte/store';
+import type { GameState, SoundThemeId } from '../engine/types';
 import {
   createInitialState,
+  tick as engTick,
   click as engClick,
   buyGenerator as engBuy,
   buyUpgrade as engBuyUpgrade,
-  tick as engTick,
-  applyOffline,
   applyPrestige as engPrestige,
+  resolveTicket as engResolveTicket,
 } from '../engine/engine';
-import { TICK_MS } from '../engine/config';
-import { load, save, clearSave } from '../engine/save';
-import type { GameState } from '../engine/types';
+import { startDeploy as engStartDeploy, performRollback as engRollback } from '../engine/release';
+import { serialize, deserialize, exportPayload, importPayload, clearSave, clearCorruptSave } from '../engine/save';
+import { applyOfflineEarnings } from '../engine/offline';
+import { TICK_MS, SHOP_TAB_IDS } from '../engine/config';
 
-let state: GameState;
-let offlineInit: { gainedScaled: bigint; elapsedMs: number } | null = null;
+const SAVE_KEY = 'it-clicker-v2-save';
+const SAVE_VERSION_SUFFIX = 'v5';
+const FULL_KEY = `${SAVE_KEY}:${SAVE_VERSION_SUFFIX}`;
 
-const loaded = load();
-if (loaded) {
-  const r = applyOffline(loaded, Date.now());
-  state = r.state;
-  if (r.gainedScaled > 0n) offlineInit = { gainedScaled: r.gainedScaled, elapsedMs: r.elapsedMs };
-} else {
-  state = createInitialState(Date.now());
+export interface OfflineInfo {
+  gainedScaled: bigint;
+  elapsedMs: number;
 }
 
-export const game = writable<GameState>(state);
-export const offline = writable<{ gainedScaled: bigint; elapsedMs: number } | null>(offlineInit);
+export type GameStore = Readable<GameState> & {
+  offline: Readable<OfflineInfo | null>;
+  init(): void;
+  tick(deltaMs: number, nowMs?: number): void;
+  click(now?: Date): void;
+  prestige(): void;
+  buy(id: string): void;
+  buyUpgrade(id: string): void;
+  setTab(tab: string): void;
+  setSound(id: SoundThemeId): void;
+  setVolume(volume: number): void;
+  toggleMute(): void;
+  doExport(): Blob;
+  doImport(file: File): Promise<void>;
+  doReset(): void;
+  dismissOffline(): void;
+  clearEventLog(): void;
+  resolveTicket(idx: number): void;
+  startDeploy(): void;
+  rollback(): void;
+};
 
-function commit() {
-  game.set(state);
+function withLocalStorage<T>(fn: () => T, fallback: T): T {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return fn();
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
 }
 
-export function doClick() {
-  state = engClick(state);
-  commit();
+function readSaveFromStorage(): GameState | null {
+  return withLocalStorage(() => {
+    const raw = localStorage.getItem(FULL_KEY) ?? localStorage.getItem(SAVE_KEY);
+    return raw ? deserialize(raw) : null;
+  }, null);
 }
 
-export function doPrestige() {
-  state = engPrestige(state);
-  commit();
+function writeSaveToStorage(s: GameState): void {
+  withLocalStorage(() => {
+    localStorage.setItem(FULL_KEY, serialize({ ...s, lastSavedMs: Date.now() }));
+  }, undefined);
 }
 
-export function buy(id: string) {
-  state = engBuy(state, id);
-  commit();
+function createGameStore(): GameStore {
+  let state: GameState = createInitialState(Date.now());
+  const { subscribe, set } = writable<GameState>(state);
+  const { subscribe: offlineSubscribe, set: setOffline } = writable<OfflineInfo | null>(null);
+
+  function commit(next: GameState): void {
+    state = next;
+    set(state);
+  }
+
+  function resolveOffline(now: number): void {
+    const result = applyOfflineEarnings(state, now);
+    if (result.gainedScaled > 0n) {
+      setOffline({ gainedScaled: result.gainedScaled, elapsedMs: result.elapsedMs });
+    } else {
+      setOffline(null);
+    }
+    commit({ ...result.state, lastSavedMs: now });
+  }
+
+  let initialized = false;
+
+  return {
+    subscribe,
+
+    init() {
+      if (initialized) return;
+      initialized = true;
+
+      const loaded = readSaveFromStorage();
+      if (loaded) {
+        state = loaded;
+        commit(state);
+        resolveOffline(Date.now());
+      } else {
+        commit(createInitialState(Date.now()));
+      }
+
+      if (typeof window !== 'undefined') {
+        const beforeUnloadHandler = () => writeSaveToStorage(state);
+        const visibilityHandler = () => {
+          if (document.visibilityState === 'visible') {
+            resolveOffline(Date.now());
+          }
+        };
+        window.addEventListener('beforeunload', beforeUnloadHandler);
+        document.addEventListener('visibilitychange', visibilityHandler);
+      }
+
+      let last = Date.now();
+      setInterval(() => {
+        const now = Date.now();
+        const dt = now - last;
+        last = now;
+        state = engTick(state, dt, now);
+        set(state);
+      }, TICK_MS);
+    },
+
+    tick(deltaMs: number, nowMs?: number) {
+      if (deltaMs <= 0) return;
+      commit(engTick(state, deltaMs, nowMs ?? Date.now()));
+    },
+
+    click(now?: Date) {
+      commit(engClick(state, now));
+    },
+
+    prestige() {
+      commit(engPrestige(state));
+    },
+
+    buy(id: string) {
+      commit(engBuy(state, id, Date.now()));
+    },
+
+    buyUpgrade(id: string) {
+      commit(engBuyUpgrade(state, id, Date.now()));
+    },
+
+    setTab(tab: string) {
+      if (SHOP_TAB_IDS.includes(tab as typeof SHOP_TAB_IDS[number])) {
+        commit({ ...state, currentTab: tab });
+      }
+    },
+
+    setSound(id: SoundThemeId) {
+      commit({ ...state, selectedSound: id });
+    },
+
+    setVolume(volume: number) {
+      commit({ ...state, masterVolume: Math.max(0, Math.min(1, volume)) });
+    },
+
+    toggleMute() {
+      commit({ ...state, muted: !state.muted });
+    },
+
+    doExport(): Blob {
+      const payload = exportPayload(state);
+      return new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    },
+
+    async doImport(file: File) {
+      const text = await file.text();
+      const imported = importPayload(text);
+      if (!imported) {
+        clearCorruptSave();
+        throw new Error('Import failed: invalid or corrupt save file');
+      }
+      writeSaveToStorage(imported);
+      commit(imported);
+    },
+
+    doReset() {
+      clearSave();
+      clearCorruptSave();
+      setOffline(null);
+      const fresh = createInitialState(Date.now());
+      writeSaveToStorage(fresh);
+      commit(fresh);
+    },
+
+    dismissOffline() {
+      setOffline(null);
+      commit({ ...state });
+    },
+
+    clearEventLog() {
+      commit({ ...state, eventLog: { ...state.eventLog, entries: [] } });
+    },
+
+    resolveTicket(idx: number) {
+      commit(engResolveTicket(state, idx, Date.now()));
+    },
+
+    startDeploy() {
+      commit(engStartDeploy(state, Date.now()));
+    },
+
+    rollback() {
+      commit(engRollback(state));
+    },
+
+    get offline(): Readable<OfflineInfo | null> {
+      return { subscribe: offlineSubscribe };
+    },
+  };
 }
 
-export function buyUp(id: string) {
-  state = engBuyUpgrade(state, id);
-  commit();
-}
+export const game = createGameStore();
+export const offline = game.offline;
 
-export function dismissOffline() {
-  offline.set(null);
-}
-
-export function hardReset() {
-  clearSave();
-  state = createInitialState(Date.now());
-  offline.set(null);
-  commit();
-}
-
-// Tick-Loop: treibt die deterministische Engine mit Wall-Clock-Δt.
-let last = Date.now();
-setInterval(() => {
-  const now = Date.now();
-  const dt = now - last;
-  last = now;
-  state = engTick(state, dt);
-  commit();
-}, TICK_MS);
-
-// Autosave + Save bei Tab-Schließen.
-setInterval(() => save(state), 5000);
-if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => save(state));
-}
+export const doClick = (): void => game.click();
+export const buy = (id: string): void => game.buy(id);
+export const buyUp = (id: string): void => game.buyUpgrade(id);
+export const doPrestige = (): void => game.prestige();
+export const hardReset = (): void => game.doReset();
+export const dismissOffline = (): void => game.dismissOffline();
+export const setTab = (tab: string): void => game.setTab(tab);
+export const setVolume = (v: number): void => game.setVolume(v);
+export const toggleMute = (): void => game.toggleMute();
+export const setSound = (id: SoundThemeId): void => game.setSound(id);
