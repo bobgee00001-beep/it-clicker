@@ -636,8 +636,7 @@
   .path {
     color: var(--dim);
   }
-  .cnt,
-  .state {
+  .cnt {
     color: var(--muted);
   }
   .flav {
@@ -649,13 +648,11 @@
     font-size: 11.5px;
     white-space: nowrap;
   }
-  button.drive:hover:not(:disabled),
-  button.pkg:hover:not(:disabled) {
+  button.drive:hover:not(:disabled) {
     border-color: var(--green-dim);
     background: #0d1410;
   }
-  button.drive:disabled,
-  button.pkg:disabled {
+  button.drive:disabled {
     opacity: 0.4;
     cursor: not-allowed;
   }
@@ -689,8 +686,7 @@
     --dim: #6a7a6f;
     --green-dim: #3fa76e;
   }
-  :global(.theme-light) .statusbar,
-  :global(.theme-light) .entries {
+  :global(.theme-light) .statusbar {
     background: #f4f6f4;
   }
   :global(.theme-light) .run {

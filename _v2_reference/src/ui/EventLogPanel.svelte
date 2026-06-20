@@ -129,6 +129,9 @@
     max-height: 220px;
     overflow-y: auto;
   }
+  :global(.theme-light) .entries {
+    background: #f4f6f4;
+  }
   .count {
     display: block;
     color: var(--dim);
