@@ -9,6 +9,35 @@ import { migrateSavePayload } from './migrate';
 
 const KEY = 'it-clicker-v2:save';
 
+type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+
+function isStorageLike(value: unknown): value is StorageLike {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    typeof (value as StorageLike).getItem === 'function' &&
+    typeof (value as StorageLike).setItem === 'function' &&
+    typeof (value as StorageLike).removeItem === 'function'
+  );
+}
+
+function getStorage(): StorageLike | null {
+  try {
+    if (typeof window !== 'undefined' && isStorageLike(window.localStorage)) {
+      return window.localStorage;
+    }
+  } catch {
+    /* ignore storage access errors */
+  }
+
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  if (descriptor && 'value' in descriptor && isStorageLike(descriptor.value)) {
+    return descriptor.value;
+  }
+
+  return null;
+}
+
 export type ExportPayload = {
   version: number;
   exportedAt: string;
@@ -222,9 +251,10 @@ export function importPayload(json: string): GameState | null {
  * Kein throw, keine Op bei SSR/Node.
  */
 export function clearCorruptSave(): void {
+  const storage = getStorage();
   try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(KEY);
+    if (storage) {
+      storage.removeItem(KEY);
     }
   } catch {
     /* ignore */
@@ -332,9 +362,10 @@ export function legacyDeserialize(raw: string): GameState | null {
 }
 
 export function save(s: GameState): void {
+  const storage = getStorage();
   try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(KEY, serialize({ ...s, lastSavedMs: Date.now() }));
+    if (storage) {
+      storage.setItem(KEY, serialize({ ...s, lastSavedMs: Date.now() }));
     }
   } catch {
     /* localStorage nicht verfügbar — ignorieren */
@@ -342,9 +373,10 @@ export function save(s: GameState): void {
 }
 
 export function load(): GameState | null {
+  const storage = getStorage();
   try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(KEY);
+    if (storage) {
+      const raw = storage.getItem(KEY);
       return raw ? deserialize(raw) : null;
     }
     return null;
@@ -354,9 +386,10 @@ export function load(): GameState | null {
 }
 
 export function clearSave(): void {
+  const storage = getStorage();
   try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(KEY);
+    if (storage) {
+      storage.removeItem(KEY);
     }
   } catch {
     /* ignore */
