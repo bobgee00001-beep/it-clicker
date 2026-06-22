@@ -19,6 +19,12 @@ export const SHARE_MULT_BASE = 50n;
 import {
   GENERATORS as CONTENT_GENERATORS,
   UPGRADES as CONTENT_UPGRADES,
+  HARDWARE_UPGRADES,
+  CLOUD_UPGRADES,
+  AI_UPGRADES,
+  CLICK_UPGRADES,
+  ITSM_UPGRADES,
+  WORKER_UPGRADES,
 } from '../content/upgrades';
 import { ACHIEVEMENTS as CONTENT_ACHIEVEMENTS } from '../content/achievements';
 import { TICKET_TITLES, SLA_SECONDS_BY_TYPE } from '../content/tickets';
@@ -102,6 +108,15 @@ export {
 export const GENERATORS: GeneratorDef[] = CONTENT_GENERATORS;
 export const UPGRADES: UpgradeDef[] = CONTENT_UPGRADES;
 export const ACHIEVEMENTS: AchievementDef[] = CONTENT_ACHIEVEMENTS;
+
+export const TAB_UPGRADES: Record<(typeof SHOP_TAB_IDS)[number], UpgradeDef[]> = {
+  hardware: HARDWARE_UPGRADES,
+  cloud: CLOUD_UPGRADES,
+  ai: AI_UPGRADES,
+  click: CLICK_UPGRADES,
+  itsm: ITSM_UPGRADES,
+  workers: WORKER_UPGRADES,
+};
 
 export function getGenerator(id: string): GeneratorDef | undefined {
   return GENERATORS.find((g) => g.id === id);
