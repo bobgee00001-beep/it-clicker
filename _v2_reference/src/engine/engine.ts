@@ -361,6 +361,11 @@ export function productionPerSecScaled(s: GameState): bigint {
     const bonusNum = BigInt(Math.round(autoTicketBonus * 10000));
     rate = (rate * bonusNum) / 10000n;
   }
+  // Release-Deploy-Bonus: z.B. +50% CPS für 120s nach erfolgreichem Deploy.
+  if (s.releaseDeployBonusTimer > 0 && s.releaseDeployBonusMultiplier !== 1) {
+    const bonusNum = BigInt(Math.round(s.releaseDeployBonusMultiplier * 1000));
+    rate = (rate * bonusNum) / 1000n;
+  }
   return rate;
 }
 

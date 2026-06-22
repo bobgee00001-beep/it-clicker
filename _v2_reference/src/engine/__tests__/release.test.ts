@@ -174,6 +174,20 @@ describe('Stage 5: Release Train + Observability', () => {
     expect(s.releaseDeployBonusTimer).toBeLessThan(120);
   });
 
+  it('Bug #3: tatsächlich gewonnene Cycles sind während Bonus-Fenster ×1.5', () => {
+    const base = { ...createInitialState(0), generators: { rack: 1 } };
+    const normalGain = tick(base, 1000).cyclesScaled;
+
+    const withBonus = {
+      ...base,
+      releaseStatus: 'success' as const,
+      releaseDeployBonusTimer: 120,
+      releaseDeployBonusMultiplier: 1.5,
+    };
+    const bonusGain = tick(withBonus, 1000).cyclesScaled;
+    expect(bonusGain).toBe((normalGain * 3n) / 2n);
+  });
+
   it('tick(1000) triggert release_manager Achievement', () => {
     let s = createInitialState(0);
     s = startDeploy(s);
@@ -191,6 +205,25 @@ describe('Stage 5: Release Train + Observability', () => {
     s = tick(s, 125_000);
     expect(s.releaseDeployBonusMultiplier).toBe(1);
     expect(s.releaseDeployBonusTimer).toBe(0);
+  });
+
+  it('Bug #4: nach Ablauf des Bonus-Fensters kann ein zweiter Deploy gestartet werden', () => {
+    let s = createInitialState(0);
+    s = startDeploy(s);
+    s = updateReleaseTrain(s, 40_000); // deploy durchlaufen
+    expect(s.releaseStatus).toBe('success');
+    expect(canStartDeploy(s)).toBe(false);
+    expect(s.releaseDeployBonusTimer).toBe(120);
+
+    // Bonus- + Monitoring-Fenster komplett abwarten
+    s = tick(s, 125_000);
+    expect(s.releaseDeployBonusTimer).toBe(0);
+    expect(s.releaseStatus).toBe('idle');
+    expect(canStartDeploy(s)).toBe(true);
+
+    const second = startDeploy(s);
+    expect(second.releaseStatus).toBe('building');
+    expect(second.deploysStarted).toBe(2);
   });
 
   it('Final E2E: vollständiger Deploy-Lifecycle inklusive Bonus + Achievement', () => {

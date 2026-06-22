@@ -136,6 +136,8 @@ function updateDeployBonusTimer(s: GameState, dtMs: number): GameState {
       ...s,
       releaseDeployBonusTimer: 0,
       releaseDeployBonusMultiplier: 1,
+      releaseStatus: s.releaseStatus === 'success' ? 'idle' : s.releaseStatus,
+      releaseMessage: s.releaseStatus === 'success' ? 'Change Window bereit.' : s.releaseMessage,
       eventLog: addEvent(s.eventLog, 'Release-Bonus ausgelaufen.', 'info', 'deploy'),
     };
   }
