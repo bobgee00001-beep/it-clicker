@@ -10,7 +10,7 @@ import {
   SEV1_THRESHOLD_TICKETS,
   SEV1_TIMER_SECONDS,
 } from './config';
-import { autoCloseSeconds } from './itsm';
+import { autoCloseSeconds, hasNoSla } from './itsm';
 
 /** Default-Zufallszahl-Quelle (0..1). Für Tests wird rng() als Parameter injiziert. */
 export function defaultRng(): number {
@@ -59,6 +59,10 @@ export function spawnTicket(s: GameState, rng: () => number = defaultRng): GameS
 /** Einzelnes Ticket um dtMs vorrücken (SLA-Decay, Auto-Close, Expire). */
 function advanceTicket(s: GameState, t: Ticket, dtSeconds: number): { ticket: Ticket | null; expired: boolean } {
   const dt = toNonNeg(dtSeconds);
+  // Wenn SLA für diesen Ticket-Typ aufgehoben ist, läuft der SLA-Timer nie ab.
+  if (hasNoSla(s, t.type)) {
+    return { ticket: t, expired: false };
+  }
   if (t.sla > dt) {
     const remaining = t.sla - dt;
     const closedTimer = t.autoCloseTimer > 0 ? Math.max(0, t.autoCloseTimer - dt) : 0;

@@ -52,6 +52,26 @@ describe('Stage 3: Tickets + SEV1 + EventLog', () => {
     expect(after.tickets.length === 0 || after.cpsPenalty === 0.8).toBe(true);
   });
 
+  it('Mit triaging Upgrade: P3 hat keine SLA und laeuft nach 46s nicht ab', () => {
+    const s = createInitialState(0);
+    const withUpgrade = { ...s, upgrades: { triaging: 1 } };
+    const withTicket = spawnTicket(withUpgrade, () => 0.0); // p3
+    expect(withTicket.tickets[0].type).toBe('p3');
+    const after = updateTickets(withTicket, (SLA_SECONDS_BY_TYPE.p3 + 1) * 1000);
+    expect(after.tickets.length).toBe(1);
+    expect(after.ticketsExpired).toBe(0);
+    expect(after.cpsPenalty).toBe(1);
+  });
+
+  it('OHNE triaging Upgrade: P3 laeuft nach 46s normal ab', () => {
+    const s = createInitialState(0);
+    const withTicket = spawnTicket(s, () => 0.0); // p3
+    expect(withTicket.tickets[0].type).toBe('p3');
+    const after = updateTickets(withTicket, (SLA_SECONDS_BY_TYPE.p3 + 1) * 1000);
+    expect(after.tickets.length).toBe(0);
+    expect(after.ticketsExpired).toBe(1);
+  });
+
   it('Mit 11 offenen Tickets: sev1Active === true', () => {
     let s = createInitialState(0);
     for (let i = 0; i < SEV1_THRESHOLD_TICKETS + 1; i++) {
