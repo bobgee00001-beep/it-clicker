@@ -361,6 +361,15 @@ export function productionPerSecScaled(s: GameState): bigint {
     const bonusNum = BigInt(Math.round(autoTicketBonus * 10000));
     rate = (rate * bonusNum) / 10000n;
   }
+  // Release-Deploy-Bonus + Expired-Ticket CPS-Penalty: globale zeitliche
+  // Multiplikatoren. Reihenfolge ist kommutativ; hier als Produkt in einem
+  // Schritt angewendet, um Float-Rundungsfehler zu minimieren.
+  const penaltyFactor = s.cpsPenaltyTimer > 0 ? s.cpsPenalty : 1;
+  const globalFactor = s.releaseDeployBonusMultiplier * penaltyFactor;
+  if (globalFactor !== 1) {
+    const factorNum = BigInt(Math.round(globalFactor * 10000));
+    rate = (rate * factorNum) / 10000n;
+  }
   return rate;
 }
 

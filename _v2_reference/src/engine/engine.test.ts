@@ -121,6 +121,38 @@ describe('productionPerSecScaled', () => {
     const s = { ...createInitialState(0), generators: { server: 3 } };
     expect(productionPerSecScaled(s)).toBe(3n * SERVER.baseRateScaled);
   });
+
+  it('ignoriert cpsPenalty wenn Timer abgelaufen ist', () => {
+    const s = { ...createInitialState(0), generators: { rack: 1 }, cpsPenalty: 0.8, cpsPenaltyTimer: 0 };
+    expect(productionPerSecScaled(s)).toBe(getGenerator('rack')!.baseRateScaled);
+  });
+
+  it('wendet cpsPenalty an wenn Timer > 0', () => {
+    const rack = getGenerator('rack')!.baseRateScaled;
+    const s = { ...createInitialState(0), generators: { rack: 1 }, cpsPenalty: 0.8, cpsPenaltyTimer: 30 };
+    expect(productionPerSecScaled(s)).toBe((rack * 8n) / 10n);
+  });
+
+  it('kombiniert Release-Bonus und CPS-Penalty multiplikativ', () => {
+    const rack = getGenerator('rack')!.baseRateScaled;
+    const s = {
+      ...createInitialState(0),
+      generators: { rack: 1 },
+      releaseDeployBonusMultiplier: 1.5,
+      cpsPenalty: 0.8,
+      cpsPenaltyTimer: 30,
+    };
+    expect(productionPerSecScaled(s)).toBe((rack * 12n) / 10n);
+  });
+
+  it('tick gewinnt weniger Cycles während cpsPenaltyTimer läuft', () => {
+    const base = { ...createInitialState(0), generators: { rack: 1 } };
+    const penalized = { ...base, cpsPenalty: 0.8, cpsPenaltyTimer: 30 };
+    const normalGain = tick(base, 1000).cyclesScaled;
+    const penalizedGain = tick(penalized, 1000).cyclesScaled;
+    expect(penalizedGain).toBeLessThan(normalGain);
+    expect(penalizedGain).toBe((getGenerator('rack')!.baseRateScaled * 8n) / 10n);
+  });
 });
 
 describe('tick — Determinismus & kein Granularitäts-Drift', () => {
