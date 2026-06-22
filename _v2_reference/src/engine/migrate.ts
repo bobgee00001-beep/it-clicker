@@ -133,53 +133,80 @@ function sanitizeScaled(state: Record<string, unknown>, key: string, fallback: b
   return converted;
 }
 
-// Forward declaration used by helpers; real implementation below wraps sanitizers and reports issues.
-let reportIssueRef: (issue: MigrationIssue) => void = () => {};
-
-function _setReportIssue(report: (issue: MigrationIssue) => void) {
-  reportIssueRef = report;
-}
-
-function sanitizeNonNegInt(state: Record<string, unknown>, key: string, fallback: number, issues: MigrationIssue[]): number {
+function sanitizeNonNegInt(
+  state: Record<string, unknown>,
+  key: string,
+  fallback: number,
+  issues: MigrationIssue[],
+): number {
   const v = state[key];
-  if (typeof v === 'number' && Number.isInteger(v) && v >= 0) return v;
-  if (v !== undefined && v !== null) issues.push({ message: 'invalid integer', field: key, received: v, fallback });
+  const n = numberOr(v, NaN);
+  if (Number.isInteger(n) && n >= 0) return n;
+  if (v !== undefined) issues.push({ message: 'invalid non-negative integer', field: key, received: v, fallback });
   return fallback;
 }
 
-function sanitizeNonNegFloat(state: Record<string, unknown>, key: string, fallback: number, issues: MigrationIssue[]): number {
+function sanitizeNullableNumber(
+  state: Record<string, unknown>,
+  key: string,
+  fallback: number | null,
+  issues: MigrationIssue[],
+): number | null {
   const v = state[key];
-  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v;
-  if (v !== undefined && v !== null) issues.push({ message: 'invalid float', field: key, received: v, fallback });
+  if (v === null) return null;
+  const n = numberOr(v, NaN);
+  if (Number.isInteger(n) && n >= 0) return n;
+  if (v !== undefined && v !== null) issues.push({ message: 'invalid nullable number', field: key, received: v, fallback });
   return fallback;
 }
 
-function sanitizeBool(state: Record<string, unknown>, key: string, fallback: boolean, issues: MigrationIssue[]): boolean {
+function sanitizeNonNegFloat(
+  state: Record<string, unknown>,
+  key: string,
+  fallback: number,
+  issues: MigrationIssue[],
+): number {
+  const v = state[key];
+  const n = numberOr(v, NaN);
+  if (Number.isFinite(n) && n >= 0) return n;
+  if (v !== undefined) issues.push({ message: 'invalid non-negative float', field: key, received: v, fallback });
+  return fallback;
+}
+
+function sanitizeBool(
+  state: Record<string, unknown>,
+  key: string,
+  fallback: boolean,
+  issues: MigrationIssue[],
+): boolean {
   const v = state[key];
   if (typeof v === 'boolean') return v;
-  if (v !== undefined && v !== null) issues.push({ message: 'invalid boolean', field: key, received: v, fallback });
+  if (v !== undefined) issues.push({ message: 'invalid boolean', field: key, received: v, fallback });
   return fallback;
 }
 
-function sanitizeString(state: Record<string, unknown>, key: string, fallback: string, issues: MigrationIssue[]): string {
+function sanitizeString(
+  state: Record<string, unknown>,
+  key: string,
+  fallback: string,
+  issues: MigrationIssue[],
+): string {
   const v = state[key];
   if (typeof v === 'string') return v;
   if (v !== undefined) issues.push({ message: 'invalid string', field: key, received: v, fallback });
   return fallback;
 }
 
-function sanitizeNullableString(state: Record<string, unknown>, key: string, fallback: string | null, issues: MigrationIssue[]): string | null {
-  const v = state[key];
-  if (v === null || typeof v === 'string') return v;
-  if (v !== undefined) issues.push({ message: 'invalid nullable string', field: key, received: v, fallback });
-  return fallback;
-}
-
-function sanitizeNullableNumber(state: Record<string, unknown>, key: string, fallback: number | null, issues: MigrationIssue[]): number | null {
+function sanitizeNullableString(
+  state: Record<string, unknown>,
+  key: string,
+  fallback: string | null,
+  issues: MigrationIssue[],
+): string | null {
   const v = state[key];
   if (v === null) return null;
-  if (typeof v === 'number' && Number.isInteger(v) && v >= 0) return v;
-  if (v !== undefined && v !== null) issues.push({ message: 'invalid nullable integer', field: key, received: v, fallback });
+  if (typeof v === 'string') return v;
+  if (v !== undefined) issues.push({ message: 'invalid nullable string', field: key, received: v, fallback });
   return fallback;
 }
 
@@ -190,7 +217,7 @@ function sanitizeDeploymentQuality(
   issues: MigrationIssue[],
 ): DeploymentQuality {
   const v = state[key];
-  const valid: DeploymentQuality[] = ['No deploys yet', 'clean', 'degraded', 'failed', 'rolled back', 'bad'];
+  const valid: DeploymentQuality[] = ['good', 'degraded', 'critical', 'No deploys yet'];
   if (typeof v === 'string' && (valid as string[]).includes(v)) return v as DeploymentQuality;
   if (v !== undefined) issues.push({ message: 'invalid deployment quality', field: key, received: v, fallback });
   return fallback;
@@ -225,15 +252,19 @@ function sanitizeReleaseStatus(
 // Legacy: v1 speicherte Generator-Counts teils im `generators`-Feld (Server),
 // teils als Upgrades. Nur IDs, die echte Generatoren sind, landen in generators;
 // alles andere wird in upgrades migriert (oder fallengelassen, falls unbekannt).
-function sanitizeGenerators(state: Record<string, unknown>, issues: MigrationIssue[]): Record<string, number> {
+function sanitizeGenerators(
+  state: Record<string, unknown>,
+  generatorPurchasesFromUpgrades: Record<string, number>,
+  issues: MigrationIssue[],
+): Record<string, number> {
   const v = state.generators;
   if (!v || typeof v !== 'object') {
     if (v !== undefined) issues.push({ message: 'invalid record', field: 'generators', received: v, fallback: {} });
-    return {};
+    return { ...generatorPurchasesFromUpgrades };
   }
   const validGeneratorIds = new Set(GENERATORS.map((g) => g.id));
   const obj = v as Record<string, unknown>;
-  const out: Record<string, number> = {};
+  const out: Record<string, number> = { ...generatorPurchasesFromUpgrades };
   const droppedKeys: string[] = [];
   for (const [id, count] of Object.entries(obj)) {
     if (!validGeneratorIds.has(id)) {
@@ -241,6 +272,15 @@ function sanitizeGenerators(state: Record<string, unknown>, issues: MigrationIss
       continue;
     }
     if (typeof count === 'number' && Number.isInteger(count) && count >= 0) {
+      if (out[id] !== undefined && out[id] !== count) {
+        issues.push({
+          message: 'generator count in generators field conflicts with upgrades field',
+          field: id,
+          received: { generators: count, upgrades: out[id] },
+          fallback: out[id],
+        });
+        continue;
+      }
       out[id] = count;
     }
   }
@@ -260,21 +300,10 @@ function sanitizeUpgrades(state: Record<string, unknown>, issues: MigrationIssue
     return {};
   }
   const validUpgradeIds = new Set(UPGRADE_IDS);
-  const validGeneratorIds = new Set(GENERATORS.map((g) => g.id));
-  const generatorUpgradeIds = new Set(
-    UPGRADES.filter((u): u is UpgradeDef & { target: { kind: 'generator'; genId: string } } => u.target.kind === 'generator').map((u) => u.target.genId),
-  );
   const obj = v as Record<string, unknown>;
   const out: Record<string, number> = {};
   const droppedKeys: string[] = [];
-  const movedToGenerators: string[] = [];
   for (const [id, level] of Object.entries(obj)) {
-    if (validGeneratorIds.has(id) && !generatorUpgradeIds.has(id)) {
-      // v1: generator IDs were sometimes stored inside upgrades without a matching v2 generator-upgrade twin.
-      // These represent generator purchases and should live in generators, not upgrades.
-      movedToGenerators.push(id);
-      continue;
-    }
     if (!validUpgradeIds.has(id)) {
       droppedKeys.push(id);
       continue;
@@ -283,11 +312,34 @@ function sanitizeUpgrades(state: Record<string, unknown>, issues: MigrationIssue
       out[id] = level;
     }
   }
-  if (movedToGenerators.length > 0) {
-    issues.push({ message: 'moved generator IDs from upgrades to generators', field: 'upgrades', received: movedToGenerators, fallback: out });
-  }
   if (droppedKeys.length > 0) {
     issues.push({ message: 'dropped unknown upgrade keys', field: 'upgrades', received: droppedKeys, fallback: out });
+  }
+  return out;
+}
+
+// Extract generator purchase counts stored inside v1 `upgrades`.
+function extractGeneratorPurchasesFromUpgrades(
+  state: Record<string, unknown>,
+  issues: MigrationIssue[],
+): Record<string, number> {
+  const v = state.upgrades;
+  if (!v || typeof v !== 'object') {
+    return {};
+  }
+  const validGeneratorIds = new Set(GENERATORS.map((g) => g.id));
+  const obj = v as Record<string, unknown>;
+  const out: Record<string, number> = {};
+  const movedToGenerators: string[] = [];
+  for (const [id, level] of Object.entries(obj)) {
+    if (!validGeneratorIds.has(id)) continue;
+    if (typeof level === 'number' && Number.isInteger(level) && level >= 0) {
+      out[id] = level;
+    }
+    movedToGenerators.push(id);
+  }
+  if (movedToGenerators.length > 0) {
+    issues.push({ message: 'moved generator IDs from upgrades to generators', field: 'upgrades', received: movedToGenerators, fallback: out });
   }
   return out;
 }
@@ -342,40 +394,58 @@ function sanitizeAchievements(state: Record<string, unknown>, key: string, issue
 function sanitizeTickets(state: Record<string, unknown>, key: string, issues: MigrationIssue[]): Ticket[] {
   const v = state[key];
   if (!Array.isArray(v)) {
-    if (v !== undefined) issues.push({ message: 'invalid tickets array', field: key, received: v, fallback: [] });
+    if (v !== undefined) issues.push({ message: 'invalid array', field: key, received: v, fallback: [] });
     return [];
   }
   const out: Ticket[] = [];
+  const dropped: unknown[] = [];
   for (const raw of v) {
-    if (!raw || typeof raw !== 'object') continue;
+    if (!raw || typeof raw !== 'object') {
+      dropped.push(raw);
+      continue;
+    }
     const t = raw as Record<string, unknown>;
     const type = t.type;
-    if (type !== 'p3' && type !== 'p2' && type !== 'p1') continue;
-    const legacyReward = t.rewardScaled !== undefined ? t.rewardScaled : t.reward;
-    const reward = toNonNegBigInt(legacyReward, 0n);
-    out.push({
-      id: typeof t.id === 'string' ? t.id : `mig_${out.length}`,
-      type,
-      title: typeof t.title === 'string' ? t.title : `${type.toUpperCase()} Ticket`,
-      sla: numberOr(t.sla, 0),
-      maxSla: numberOr(t.maxSla, 0),
-      rewardScaled: reward,
-      autoCloseTimer: numberOr(t.autoCloseTimer, 0),
-      spawnTime: numberOr(t.spawnTime, 0),
-    });
+    const sla = t.sla;
+    const title = t.title;
+    const createdAt = t.createdAt;
+    if (
+      typeof type === 'string' &&
+      typeof sla === 'number' &&
+      Number.isFinite(sla) &&
+      typeof title === 'string' &&
+      (typeof createdAt === 'number' || createdAt === undefined)
+    ) {
+      out.push({
+        id: typeof t.id === 'string' ? t.id : `ticket_${out.length}`,
+        type,
+        sla,
+        title,
+        createdAt: typeof createdAt === 'number' ? createdAt : Date.now(),
+        severity: typeof t.severity === 'number' ? t.severity : undefined,
+        rewardCyclesScaled: toNonNegBigInt(t.rewardCyclesScaled, 0n),
+      });
+    } else {
+      dropped.push(raw);
+    }
+  }
+  if (dropped.length > 0) {
+    issues.push({ message: 'dropped invalid tickets', field: key, received: dropped, fallback: out });
   }
   return out;
 }
 
-function sanitizeSpendEvents(state: Record<string, unknown>, key: string): { time: number; amountScaled: bigint }[] {
+function sanitizeSpendEvents(state: Record<string, unknown>, key: string): GameState['spendEvents'] {
   const v = state[key];
   if (!Array.isArray(v)) return [];
-  const out: { time: number; amountScaled: bigint }[] = [];
+  const out: GameState['spendEvents'] = [];
   for (const raw of v) {
     if (!raw || typeof raw !== 'object') continue;
     const e = raw as Record<string, unknown>;
-    if (typeof e.time === 'number' && Number.isFinite(e.time)) {
-      out.push({ time: e.time, amountScaled: toNonNegBigInt(e.amountScaled, 0n) });
+    const at = numberOr(e.at, 0);
+    const cyclesScaled = toNonNegBigInt(e.cyclesScaled, 0n);
+    if (cyclesScaled > 0n && Number.isFinite(at) && at > 0) {
+      out.push({ at, cyclesScaled });
     }
   }
   return out;
@@ -403,6 +473,15 @@ function sanitizeEventLog(state: Record<string, unknown>, key: string): EventLog
     return { entries: entries as EventLog['entries'], maxEntries, filterCategory };
   }
   return createEventLog();
+}
+
+// Report-Issue-Ref (verhindert zirkuläre Abhängigkeit mit makeIssueLogger).
+let reportIssueRef: (issue: MigrationIssue) => void = () => {};
+function _setReportIssue(fn: (issue: MigrationIssue) => void) {
+  reportIssueRef = fn;
+}
+function reportIssue(issue: MigrationIssue): void {
+  reportIssueRef(issue);
 }
 
 // --- Migration-Chain: Default-Injection pro Version ---
@@ -559,8 +638,11 @@ function buildGameState(
   _setReportIssue(report);
   for (const issue of issues) report(issue);
 
+  // Legacy: v1 saved generator purchases in `upgrades`. Pull those out first
+  // so sanitizeGenerators can merge them with any explicit v1 `generators` field.
+  const generatorPurchases = extractGeneratorPurchasesFromUpgrades(state, issues);
   const upgrades = sanitizeUpgrades(state, issues);
-  const generators = sanitizeGenerators(state, issues);
+  const generators = sanitizeGenerators(state, generatorPurchases, issues);
   const achievements = sanitizeAchievements(state, 'achievements', issues);
 
   // Legacy: v1 hat `totalClicks` statt `clicks`.

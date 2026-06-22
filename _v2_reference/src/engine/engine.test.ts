@@ -121,6 +121,35 @@ describe('productionPerSecScaled', () => {
     const s = { ...createInitialState(0), generators: { server: 3 } };
     expect(productionPerSecScaled(s)).toBe(3n * SERVER.baseRateScaled);
   });
+
+  it('Bug #3: Release-Bonus ×1.5 wird auf passive Produktion angewendet während Bonus-Timer läuft', () => {
+    const base = { ...createInitialState(0), generators: { rack: 1 } };
+    const baseRate = productionPerSecScaled(base);
+    expect(baseRate).toBeGreaterThan(0n);
+
+    const withBonus = {
+      ...base,
+      releaseStatus: 'success' as const,
+      releaseDeployBonusTimer: 120,
+      releaseDeployBonusMultiplier: 1.5,
+    };
+    const bonusRate = productionPerSecScaled(withBonus);
+    // Exakt ×1.5 (kein Float-Rundungsfehler bei 1.5)
+    expect(bonusRate).toBe((baseRate * 3n) / 2n);
+  });
+
+  it('Bug #3: Bonus wirkt nicht mehr wenn Timer abgelaufen ist', () => {
+    const base = { ...createInitialState(0), generators: { rack: 1 } };
+    const baseRate = productionPerSecScaled(base);
+
+    const expired = {
+      ...base,
+      releaseStatus: 'success' as const,
+      releaseDeployBonusTimer: 0,
+      releaseDeployBonusMultiplier: 1,
+    };
+    expect(productionPerSecScaled(expired)).toBe(baseRate);
+  });
 });
 
 describe('tick — Determinismus & kein Granularitäts-Drift', () => {
