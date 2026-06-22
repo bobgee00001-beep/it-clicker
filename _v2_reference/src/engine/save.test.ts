@@ -88,7 +88,7 @@ describe('deserialize — v1/v2/v3/v4/v5 Migration', () => {
     const back = deserialize(v4)!;
     expect(back.shares).toBe(3n);
     expect(back.generators).toEqual({ pi: 2, ssd: 1 });
-    expect(back.upgrades).toEqual({ ssd: 1 });
+    expect(back.upgrades).toEqual({}); // ssd was a generator purchase in v1 upgrades, moved to generators
     expect(back.releaseStatus).toBe('idle');
     expect(back.observabilityScore).toBe(82);
     expect(back.masterVolume).toBe(1.0);

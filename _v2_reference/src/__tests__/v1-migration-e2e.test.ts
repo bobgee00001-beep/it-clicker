@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { migrateSavePayload } from '../engine/migrate.js';
-import { createInitialState, tick } from '../engine/engine.js';
+import { createInitialState, productionPerSecScaled, tick } from '../engine/engine.js';
 
 describe('E2E v1 → v2 Migration (real v1 save shape)', () => {
   // Realistic v1 savegame — flat format, no meta wrapper
@@ -124,6 +124,21 @@ describe('E2E v1 → v2 Migration (real v1 save shape)', () => {
   it('7. Engine tick() runs on migrated v1 save without throwing', () => {
     const result = migrateSavePayload(v1FlatSave);
     expect(() => tick(result.data, 60_000)).not.toThrow();
+  });
+
+  it('7b. v1 generator purchases in upgrades map migrate into generators with counts', () => {
+    const result = migrateSavePayload(v1FlatSave);
+    expect(result.data.generators.rack).toBe(2);
+    expect(result.data.generators.server).toBe(1);
+    // v1 used the user-facing key 'cloud' for what v2 calls the 'vm' generator.
+    expect(result.data.generators.vm).toBe(3);
+  });
+
+  it('7c. migrated generators produce passive cycles (productionPerSecScaled > 0)', () => {
+    const result = migrateSavePayload(v1FlatSave);
+    const rate = productionPerSecScaled(result.data);
+    expect(typeof rate).toBe('bigint');
+    expect(rate).toBeGreaterThan(0n);
   });
 
   it('8. NaN in v1 cycles → sanitized to 0n, migrated:true', () => {
