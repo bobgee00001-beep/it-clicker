@@ -276,7 +276,10 @@ function sanitizeGenerators(
 function extractGeneratorPurchasesFromUpgrades(
   state: Record<string, unknown>,
   issues: MigrationIssue[],
+  legacyFlat: boolean,
 ): Record<string, number> {
+  // Nur das Legacy-Flat-Format vermischte Generatoren und Upgrades. Native nie.
+  if (!legacyFlat) return {};
   const v = state.upgrades;
   if (!v || typeof v !== 'object') return {};
   const validUpgradeIds = new Set(UPGRADE_IDS);
@@ -300,7 +303,11 @@ function extractGeneratorPurchasesFromUpgrades(
 // Legacy: v1 speicherte sowohl echte Upgrades als auch Generator-Käufe im
 // `upgrades`-Feld. Generator-IDs (und deren Aliase) werden in `generators`
 // umgelenkt, nur bekannte echte Upgrade-IDs verbleiben hier.
-function sanitizeUpgrades(state: Record<string, unknown>, issues: MigrationIssue[]): Record<string, number> {
+function sanitizeUpgrades(
+  state: Record<string, unknown>,
+  issues: MigrationIssue[],
+  legacyFlat: boolean,
+): Record<string, number> {
   const v = state.upgrades;
   if (!v || typeof v !== 'object') {
     if (v !== undefined) issues.push({ message: 'invalid record', field: 'upgrades', received: v, fallback: {} });
@@ -311,9 +318,10 @@ function sanitizeUpgrades(state: Record<string, unknown>, issues: MigrationIssue
   const out: Record<string, number> = {};
   const droppedKeys: string[] = [];
   for (const [id, level] of Object.entries(obj)) {
-    // Generator purchases live in `generators`; skip them here even if they also
-    // have a v2 hybrid-upgrade twin.
-    if (resolveV1GeneratorId(id)) continue;
+    // NUR bei v1: Generator-Käufe leben in `generators`; hier überspringen, auch
+    // wenn sie einen v2-Hybrid-Upgrade-Twin haben. Ab v2 ist `upgrades` kanonisch
+    // -> ein echtes Upgrade mit Generator-Twin-ID (server/vm/ssd) bleibt erhalten.
+    if (legacyFlat && resolveV1GeneratorId(id)) continue;
     if (!validUpgradeIds.has(id)) {
       droppedKeys.push(id);
       continue;
@@ -561,7 +569,7 @@ export function migrateSavePayload(
 
   if (!extracted) {
     issues.push({ message: 'payload is not an object; treating as v1 defaults' });
-    const empty = buildGameState({}, issues, logger);
+    const empty = buildGameState({}, issues, logger, true);
     return { data: empty, migrated: true, fromVersion: 1 };
   }
 
@@ -570,13 +578,17 @@ export function migrateSavePayload(
 
   if (fromVersion > ENGINE_VERSION) {
     issues.push({ message: `save version ${fromVersion} > engine version ${ENGINE_VERSION}; clamping to defaults` });
-    const empty = buildGameState({}, issues, logger);
+    const empty = buildGameState({}, issues, logger, false);
     return { data: empty, migrated: true, fromVersion };
   }
 
   const withDefaults = applyDefaultChain(state, fromVersion);
   const migrated = fromVersion !== ENGINE_VERSION;
-  const result = buildGameState(withDefaults, issues, logger);
+  // Generator<->Upgrade-Umlenkung NUR für das Legacy-Flat-Format (Vorgänger-
+  // Saves saveVersion 1..4), das Generator-Käufe ins `upgrades`-Feld mischte.
+  // Native Saves (ENGINE_VERSION = 5) haben getrennte generators/upgrades und
+  // dürfen NICHT umgedeutet werden — sonst Datenverlust bei Hybrid-IDs.
+  const result = buildGameState(withDefaults, issues, logger, fromVersion < ENGINE_VERSION);
   return { data: result, migrated, fromVersion };
 }
 
@@ -584,6 +596,12 @@ function buildGameState(
   state: Record<string, unknown>,
   issues: MigrationIssue[],
   externalLogger?: MigrationLogger,
+  // Nur das Legacy-Flat-Format (Vorgänger-Saves saveVersion < ENGINE_VERSION)
+  // lagerte Generator-Käufe im `upgrades`-Feld. Für native Saves ist `upgrades`
+  // kanonisch und darf NICHT umgedeutet werden — sonst gingen legitime Upgrades
+  // mit Generator-Twin-ID (server/vm/ssd) beim Laden verloren (Roundtrip-
+  // Korruption). Default false = sicher (kein Umlenken).
+  legacyFlat: boolean = false,
 ): GameState {
   const { log, eventLog } = makeIssueLogger();
 
@@ -597,8 +615,8 @@ function buildGameState(
 
   // Legacy: v1 saved generator purchases in `upgrades`. Pull those out first
   // so sanitizeGenerators can merge them with any explicit v1 `generators` field.
-  const generatorPurchasesFromUpgrades = extractGeneratorPurchasesFromUpgrades(state, issues);
-  const upgrades = sanitizeUpgrades(state, issues);
+  const generatorPurchasesFromUpgrades = extractGeneratorPurchasesFromUpgrades(state, issues, legacyFlat);
+  const upgrades = sanitizeUpgrades(state, issues, legacyFlat);
   const generators = sanitizeGenerators(state, generatorPurchasesFromUpgrades, issues);
   const achievements = sanitizeAchievements(state, 'achievements', issues);
 
