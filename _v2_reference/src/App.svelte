@@ -27,7 +27,14 @@
     canPrestige,
     prestigeGain,
   } from './engine/engine';
-  import { GENERATORS, UPGRADES, ACHIEVEMENTS, TAB_NAMES, SHOP_TAB_IDS } from './engine/config';
+  import {
+    GENERATORS,
+    UPGRADES,
+    ACHIEVEMENTS,
+    TAB_NAMES,
+    SHOP_TAB_IDS,
+    TAB_UPGRADES,
+  } from './engine/config';
   import { formatCycles } from './lib/format';
   import type { EventCategory } from './engine/eventLog';
   import type { SoundThemeId } from './engine/types';
@@ -66,14 +73,7 @@
   );
 
   // derive upgrades for active tab
-  const tabUpgrades = $derived(
-    UPGRADES.filter((u) => {
-      if (activeTab === 'workers') {
-        return u.id.startsWith('worker_') || ['intern', 'junior', 'senior', 'staff'].includes(u.id);
-      }
-      return u.id.startsWith(activeTab);
-    }),
-  );
+  const tabUpgrades = $derived(TAB_UPGRADES[activeTab as keyof typeof TAB_UPGRADES] ?? []);
 
   const affordableUpgrades = $derived(
     UPGRADES.reduce(
