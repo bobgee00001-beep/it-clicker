@@ -91,7 +91,6 @@ describe('migrateSavePayload', () => {
     expect(r.data.releaseStatus).toBe('idle');
     expect(r.data.observabilityScore).toBe(82);
     expect(r.data.masterVolume).toBe(1.0);
-    expect(r.data.eventLog.entries).toHaveLength(0);
   });
 
   it('berührt ein v5-Save NICHT und reported migrated=false', () => {
@@ -130,6 +129,56 @@ describe('migrateSavePayload', () => {
     expect(issues.some((m) => m.includes('invalid scaled value'))).toBe(true);
   });
 
+  it('Bug: Sanitizer-Issues aus dem Return-Objekt landen im externen Hook UND internen eventLog', () => {
+    // Vorher: Sanitizer-Issues (ausser scaled) wurden waehrend des Return-
+    // Objekt-Aufbaus in `issues` gepusht, aber die report()-Schleife lief
+    // EINMAL frueh — diese Issues wurden stumm verschluckt. Der externe Hook
+    // sah nur die scaled-Issues, der interne eventLog ebenso.
+    // Fix: zweite report()-Schleife am Ende von buildGameState fuer alle
+    // NEU hinzugekommenen issues.
+    const externalIssues: string[] = [];
+    const r = migrateSavePayload(
+      {
+        version: 1,
+        // Sanitizer-Issues, die NIE im externen Hook auftauchten:
+        sessionClicks: 'many',         // sanitizeNonNegInt -> 'invalid integer'
+        prestige: 'huge',              // sanitizeNonNegInt -> 'invalid integer'
+        tickets: 'not-an-array',       // sanitizeTickets -> 'invalid tickets array'
+        upgrades: { 'unknown-id': 1 }, // sanitizeUpgrades -> 'dropped unknown upgrade keys'
+        achievements: { 'fake-achv': 1 }, // sanitizeAchievements -> 'dropped unknown keys'
+        masterVolume: NaN,             // sanitizeNonNegFloat -> 'invalid float'
+        multiplier: 'NaN-ish',         // sanitizeNonNegFloat -> 'invalid float'
+        releaseStatus: 'partying',     // sanitizeReleaseStatus -> 'invalid release status'
+      },
+      { onIssue: (issue) => externalIssues.push(issue.message) },
+    );
+
+    // 1. Externer Hook sieht ALLE Issues, nicht nur die scaled.
+    expect(externalIssues.some((m) => m.includes('invalid integer'))).toBe(true);
+    expect(externalIssues.some((m) => m.includes('invalid tickets array'))).toBe(true);
+    expect(externalIssues.some((m) => m.includes('dropped unknown upgrade'))).toBe(true);
+    expect(externalIssues.some((m) => m.includes('dropped unknown keys'))).toBe(true);
+    expect(externalIssues.some((m) => m.includes('invalid float'))).toBe(true);
+    expect(externalIssues.some((m) => m.includes('invalid release status'))).toBe(true);
+    expect(externalIssues.length).toBeGreaterThanOrEqual(7);
+
+    // 2. Interner eventLog sieht die GLEICHEN Issue-Messages (Migration: prefix).
+    const internalMessages = r.data.eventLog.entries.map((e) => e.message);
+    expect(internalMessages.some((m) => m.includes('Migration:') && m.includes('invalid integer'))).toBe(true);
+    expect(internalMessages.some((m) => m.includes('Migration:') && m.includes('invalid tickets array'))).toBe(true);
+    expect(internalMessages.some((m) => m.includes('Migration:') && m.includes('dropped unknown'))).toBe(true);
+    expect(internalMessages.some((m) => m.includes('Migration:') && m.includes('invalid float'))).toBe(true);
+    expect(internalMessages.some((m) => m.includes('Migration:') && m.includes('invalid release status'))).toBe(true);
+
+    // 3. Keine Doppelreports: jeder Issue exakt einmal in beiden.
+    const externalFieldKeys = externalIssues.length;
+    const internalMigrationEntries = internalMessages.filter((m) => m.startsWith('Migration:')).length;
+    // externalIssues.length == internalMigrationEntries, weil jede externe
+    // Meldung via report() genau einen Eintrag im internen eventLog erzeugt
+    // (fuer gleiches `issues`-Array). Externe Hooks haben KEINE "Migration:"-Prefix.
+    expect(internalMigrationEntries).toBe(externalFieldKeys);
+  });
+
   it('verwirft unbekannte Upgrade- und Achievement-IDs', () => {
     const r = migrateSavePayload({
       version: 1,
@@ -142,13 +191,19 @@ describe('migrateSavePayload', () => {
     expect(r.data.achievements).toEqual({ 'first_click': 1 });
   });
 
-  it('liefert Defaults für ein nicht-objekt Payload', () => {
+  it('liefert Defaults für ein nicht-objekt Payload und meldet 1 Issue im eventLog', () => {
+    // Vorher (main): 0 entries — Bug, weil 'payload is not an object' stumm
+    // durch den Logger-Snapshot-Bug verschluckt wurde. Fix in
+    // fix/migrate-issue-reporting: alle Sanitizer-Issues werden jetzt am Ende
+    // von buildGameState durchgereicht, incl. der initial-issue aus
+    // extractSourceState.
     const r = migrateSavePayload(null);
 
     expect(r.migrated).toBe(true);
     expect(r.fromVersion).toBe(1);
     expect(r.data.version).toBe(ENGINE_VERSION);
     expect(r.data.cyclesScaled).toBe(0n);
-    expect(r.data.eventLog.entries.length).toBe(0);
+    expect(r.data.eventLog.entries.length).toBeGreaterThanOrEqual(1);
+    expect(r.data.eventLog.entries[0].message).toContain('payload is not an object');
   });
 });
