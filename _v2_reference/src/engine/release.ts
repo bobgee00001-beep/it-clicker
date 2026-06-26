@@ -129,13 +129,31 @@ export function updateReleaseTrain(s: GameState, dtMs: number, successChance?: (
 }
 
 function updateDeployBonusTimer(s: GameState, dtMs: number): GameState {
-  if (s.releaseDeployBonusTimer <= 0) return s;
+  if (s.releaseDeployBonusTimer <= 0) {
+    // Normalisierung: ein 'success'-State ohne laufenden Bonus-Timer (z.B. aus
+    // einem geladenen Save mit timer=0) bliebe sonst für immer in 'success' und
+    // blockiert canStartDeploy() dauerhaft. Terminal-State auf 'idle' ziehen.
+    if (s.releaseStatus === 'success') {
+      return {
+        ...s,
+        releaseStatus: 'idle',
+        releaseStageIndex: -1,
+        releaseStageTimer: 0,
+        releaseMessage: 'Change Window bereit.',
+      };
+    }
+    return s;
+  }
   const next = Math.max(0, s.releaseDeployBonusTimer - dtMs / 1000);
   if (next === 0 && s.releaseDeployBonusMultiplier !== 1) {
     return {
       ...s,
       releaseDeployBonusTimer: 0,
       releaseDeployBonusMultiplier: 1,
+      // Bonus-Fenster vorbei -> Release-Zyklus schließen, zweiter Deploy möglich.
+      releaseStatus: s.releaseStatus === 'success' ? 'idle' : s.releaseStatus,
+      releaseStageIndex: s.releaseStatus === 'success' ? -1 : s.releaseStageIndex,
+      releaseMessage: s.releaseStatus === 'success' ? 'Change Window bereit.' : s.releaseMessage,
       eventLog: addEvent(s.eventLog, 'Release-Bonus ausgelaufen.', 'info', 'deploy'),
     };
   }
@@ -249,6 +267,12 @@ export function performRollback(s: GameState): GameState {
     observabilityScore: Math.min(100, s.observabilityScore + 18),
     rollbackAvailable: false,
     monitoringTimer: 0,
+    // Release-Zyklus nach Rollback schließen — sonst bleibt releaseStatus auf
+    // 'failed'/'deploying' und canStartDeploy() ist dauerhaft false (Soft-Lock).
+    releaseStatus: 'idle',
+    releaseStageIndex: -1,
+    releaseStageTimer: 0,
+    releaseMessage: 'Rollback abgeschlossen: Change Window bereit.',
     releaseDeployBonusTimer: 0,
     releaseDeployBonusMultiplier: 1,
     lastDeploymentQuality: 'rolled back',

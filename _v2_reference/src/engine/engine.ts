@@ -189,6 +189,32 @@ function divFloor(num: bigint, den: bigint): bigint {
   return num / den;
 }
 
+function reduceRat(r: Rational): Rational {
+  const g = gcdBig(r.num, r.den);
+  return { num: r.num / g, den: r.den / g };
+}
+
+function mulRat(a: Rational, b: Rational): Rational {
+  return reduceRat({ num: a.num * b.num, den: a.den * b.den });
+}
+
+// Float-Faktor (z.B. 1.5, 0.8) EINMAL exakt in einen Rational über den festen
+// Nenner 1000 konvertieren — danach reine Integer-Arithmetik (kein Float im
+// Akkumulationspfad). Ein Re-Verifier bildet round(x*1000)/1000 deterministisch
+// nach. Für die kanonischen Werte ist das exakt (1.5 -> 3/2, 0.8 -> 4/5).
+function floatToRational(x: number): Rational {
+  return reduceRat({ num: BigInt(Math.round(x * 1000)), den: 1000n });
+}
+
+// Kombinierter temporaler CPS-Faktor (Deploy-Bonus × SLA-Penalty) bei gegebenen
+// Aktiv-Flags. Multiplikation ist kommutativ => reihenfolge-unabhängig => det.
+function temporalFactor(s: GameState, penaltyOn: boolean, bonusOn: boolean): Rational {
+  let f: Rational = { num: 1n, den: 1n };
+  if (penaltyOn && s.cpsPenalty !== 1) f = mulRat(f, floatToRational(s.cpsPenalty));
+  if (bonusOn && s.releaseDeployBonusMultiplier !== 1) f = mulRat(f, floatToRational(s.releaseDeployBonusMultiplier));
+  return f;
+}
+
 // Komponiert alle gekauften Upgrade-Faktoren nach Wirkungs-Scope. factor wird
 // je Level multiplikativ angewandt (Phase 2a: Level 0/1; gestaffelt später).
 function multipliers(s: GameState): {
@@ -334,11 +360,12 @@ export function nextCostScaled(def: GeneratorDef, owned: number): bigint {
   return cost;
 }
 
-// Passive Produktion pro Sekunde (scaled). Nur das ist offline-fähig (Whitelist).
+// Passive Basisrate pro Sekunde (scaled) OHNE temporale Faktoren. Das ist die
+// offline-whitelisted Rate (DESIGN: offline NUR passive Produktion).
 // KANONISCH: ein einziger Floor PRO GENERATOR —
 //   effRate_g = floor( baseRate_g * count_g * globalNum * genNum / (globalDen * genDen) )
 // Multiplikation VOR Division, eine Division je Generator. Reihenfolge-unabhängig.
-export function productionPerSecScaled(s: GameState): bigint {
+export function productionPassiveRateScaled(s: GameState): bigint {
   const m = multipliers(s);
   let rate = 0n;
   for (const def of GENERATORS) {
@@ -352,23 +379,27 @@ export function productionPerSecScaled(s: GameState): bigint {
     const composedDen = m.global.den * g.den;
     // Einzelner Floor pro Generator: floor(baseRate * count * composedNum / composedDen).
     const num = def.baseRateScaled * count * composedNum;
-    const den = composedDen;
-    rate += num / den;
+    rate += num / composedDen;
   }
-  // ITSM-Autoticket-Bonus: +1% CPS pro Ticket × Quellen.
+  // ITSM-Autoticket-Bonus: +1% CPS pro Ticket × Quellen — als BONUS auf die Rate
+  // (factor = 1 + bonus), NICHT als Faktor < 1. (Früher: rate*bonus => 99%-Nerf.)
   const autoTicketBonus = cpsPerTicketBonus(s);
   if (autoTicketBonus !== 0) {
-    const bonusNum = BigInt(Math.round(autoTicketBonus * 10000));
-    rate = (rate * bonusNum) / 10000n;
+    const factorNum = 10000n + BigInt(Math.round(autoTicketBonus * 10000));
+    rate = (rate * factorNum) / 10000n;
   }
   return rate;
 }
 
-// Worker-CPS werden additiv zur passiven Produktion akkumuliert. Sie sind
-// online-only (da sie von der aktuellen Click-Power abhängen) und fließen
-// direkt in tick(), nicht in productionPerSecScaled() (offline-Whitelist).
-function productionPlusWorkerCps(s: GameState, clickPower: bigint): bigint {
-  return productionPerSecScaled(s) + workerCpsScaled(s, clickPower);
+// Effektive (angezeigte) Produktion pro Sekunde inkl. aktuell AKTIVER temporaler
+// Faktoren (Deploy-Bonus / SLA-Penalty). Für UI & Tests. Die zeit-korrekte
+// Integration über ein dt passiert segmentiert in produce(), nicht hier.
+export function productionPerSecScaled(s: GameState): bigint {
+  const base = productionPassiveRateScaled(s);
+  const penaltyOn = s.cpsPenaltyTimer > 0 && s.cpsPenalty !== 1;
+  const bonusOn = s.releaseDeployBonusTimer > 0 && s.releaseDeployBonusMultiplier !== 1;
+  const f = temporalFactor(s, penaltyOn, bonusOn);
+  return (base * f.num) / f.den;
 }
 
 // Effektive Klick-Power = (Basis + Additive) × Click-Multiplikatoren.
@@ -529,22 +560,67 @@ export function accrue(
 }
 
 // Produktion über dtMs auf den State anwenden (mit Übertrag). Intern für tick/offline.
-function produce(s: GameState, dtMs: number, includeWorkerCps: boolean): { state: GameState; gainedScaled: bigint } {
+//
+// applyTemporal=true (online/tick): temporale Faktoren (Deploy-Bonus, SLA-Penalty)
+// sind ZEIT-BEGRENZT. Das Intervall wird an den Timer-Grenzen SEGMENTIERT, damit
+// tick(dt) bit-identisch zu N Sub-Ticks ist — die Grenzen liegen an ABSOLUTEN
+// Timer-Ablaufzeitpunkten (timer*1000 ms), nicht an der Tick-Größe. Pro Segment
+// EIN Floor (floor(rate*num/den)); der Sub-Unit-Rest wird über accrue()
+// segmentübergreifend getragen. Bisher: temporaler Faktor auf das GANZE dt
+// angewandt => tick(125s) gab 125s Bonus statt 120s (Online/Offline-Drift).
+//
+// applyTemporal=false (offline): KEINE temporalen Faktoren (Whitelist) — reine
+// passive Basisrate über das ganze dt.
+function produce(
+  s: GameState,
+  dtMs: number,
+  includeWorkerCps: boolean,
+  applyTemporal: boolean,
+): { state: GameState; gainedScaled: bigint } {
   const clickPower = effectiveClickScaled(s);
-  const rate = includeWorkerCps
-    ? productionPerSecScaled(s) + workerCpsScaled(s, clickPower)
-    : productionPerSecScaled(s); // scaled / s
-  const { gainScaled, remainder } = accrue(rate, dtMs, s.prodRemainder);
-  const workerEarned = includeWorkerCps ? (workerCpsScaled(s, clickPower) * BigInt(dtMs)) / 1000n : 0n;
+  const workerCps = includeWorkerCps ? workerCpsScaled(s, clickPower) : 0n;
+  // Basisrate vor temporalem Faktor (Bonus/Penalty wirken global auf passive
+  // Produktion UND Worker-CPS — beide sind globale CPS-Effekte).
+  const baseRate = productionPassiveRateScaled(s) + workerCps;
+  const dt = Math.max(0, Math.trunc(dtMs));
+  let remainder = s.prodRemainder;
+  let gained = 0n;
+
+  if (!applyTemporal) {
+    const r = accrue(baseRate, dt, remainder);
+    gained = r.gainScaled;
+    remainder = r.remainder;
+  } else {
+    const penaltyActive = s.cpsPenaltyTimer > 0 && s.cpsPenalty !== 1;
+    const bonusActive = s.releaseDeployBonusTimer > 0 && s.releaseDeployBonusMultiplier !== 1;
+    const penaltyEndMs = penaltyActive ? Math.max(0, Math.floor(s.cpsPenaltyTimer * 1000)) : 0;
+    const bonusEndMs = bonusActive ? Math.max(0, Math.floor(s.releaseDeployBonusTimer * 1000)) : 0;
+    // Distinkte Grenzen STRICT innerhalb (0, dt); Grenze == dt bleibt im letzten Segment.
+    const bounds = [...new Set([penaltyEndMs, bonusEndMs])].filter((b) => b > 0 && b < dt).sort((a, b) => a - b);
+    const points = [0, ...bounds, dt];
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const segMs = points[i + 1] - a;
+      if (segMs <= 0) continue;
+      // Timer ist im Segment [a, a+segMs) aktiv, solange seine Grenze > a liegt.
+      const f = temporalFactor(s, penaltyActive && penaltyEndMs > a, bonusActive && bonusEndMs > a);
+      const effRate = (baseRate * f.num) / f.den;
+      const r = accrue(effRate, segMs, remainder);
+      gained += r.gainScaled;
+      remainder = r.remainder;
+    }
+  }
+
+  const workerEarned = includeWorkerCps ? (workerCps * BigInt(dt)) / 1000n : 0n;
   return {
     state: {
       ...s,
-      cyclesScaled: s.cyclesScaled + gainScaled,
-      totalEarnedScaled: s.totalEarnedScaled + gainScaled,
+      cyclesScaled: s.cyclesScaled + gained,
+      totalEarnedScaled: s.totalEarnedScaled + gained,
       workerEarnedScaled: s.workerEarnedScaled + workerEarned,
       prodRemainder: remainder,
     },
-    gainedScaled: gainScaled,
+    gainedScaled: gained,
   };
 }
 
@@ -552,11 +628,13 @@ function produce(s: GameState, dtMs: number, includeWorkerCps: boolean): { state
 // Kein Early-Return bei gain==0: der Übertrag muss IMMER fortgeschrieben werden.
 export function tick(s: GameState, dtMs: number, nowMs?: number): GameState {
   if (dtMs <= 0) return s;
-  let state = produce(s, dtMs, true).state;
-  // Ticket-Lebenszyklus (SLA-Decay, Auto-Close, Expire).
-  const preTicketsCount = state.tickets.length;
+  let state = produce(s, dtMs, true, true).state;
+  // Ticket-Lebenszyklus (SLA-Decay, Auto-Close, Expire). Expired-Count über das
+  // ticketsExpired-Delta — sonst würden Auto-Closes (Tickets verschwinden OHNE
+  // Expire) fälschlich als SLA-Breach geloggt.
+  const preExpired = state.ticketsExpired;
   state = updateTickets(state, dtMs);
-  const expiredCount = preTicketsCount - state.tickets.length;
+  const expiredCount = state.ticketsExpired - preExpired;
   if (expiredCount > 0) {
     state = withExpiredEvent(state, expiredCount);
   }
@@ -580,15 +658,9 @@ export function tick(s: GameState, dtMs: number, nowMs?: number): GameState {
   // Release Train + Observability.
   state = updateReleaseTrain(state, dtMs);
   state = updateObservability(state, dtMs);
-  // Deploy-Success Bonus: während releaseDeployBonusTimer läuft bleibt der
-  // Multiplikator auf 1.5; sonst wird er explizit auf 1.0 zurückgesetzt.
-  if (state.releaseStatus === 'success' && state.releaseDeployBonusTimer > 0) {
-    if (state.releaseDeployBonusMultiplier !== 1.5) {
-      state = { ...state, releaseDeployBonusMultiplier: 1.5 };
-    }
-  } else if (state.releaseDeployBonusMultiplier !== 1) {
-    state = { ...state, releaseDeployBonusMultiplier: 1 };
-  }
+  // Hinweis: releaseDeployBonusMultiplier wird allein in release.ts verwaltet
+  // (finishDeploy setzt 1.5, updateDeployBonusTimer setzt bei Ablauf auf 1) —
+  // single source of truth, kein doppeltes Setzen hier.
   return evaluateAchievements(state);
 }
 
@@ -600,7 +672,7 @@ export function applyOffline(
   nowMs: number,
 ): { state: GameState; gainedScaled: bigint; elapsedMs: number } {
   const elapsedMs = Math.max(0, Math.min(Math.trunc(nowMs - s.lastSavedMs), OFFLINE_CAP_MS));
-  const { state: produced, gainedScaled } = produce(s, elapsedMs, false);
+  const { state: produced, gainedScaled } = produce(s, elapsedMs, false, false);
   return { state: { ...produced, lastSavedMs: nowMs }, gainedScaled, elapsedMs };
 }
 
