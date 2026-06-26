@@ -120,3 +120,35 @@ describe('Stage 3: Tickets + SEV1 + EventLog', () => {
     expect(filteredEntries(log).length).toBe(0);
   });
 });
+
+describe('No-SLA-Tickets (Triaging): kein Ablauf, aber Auto-Close tickt weiter', () => {
+  it('Mit triaging: P3 läuft nach SLA+1s NICHT ab (kein Expire, keine Penalty)', () => {
+    const s = { ...createInitialState(0), upgrades: { triaging: 1 } };
+    const withTicket = spawnTicket(s, () => 0.0); // p3
+    expect(withTicket.tickets[0].type).toBe('p3');
+    const after = updateTickets(withTicket, (SLA_SECONDS_BY_TYPE.p3 + 1) * 1000);
+    expect(after.tickets.length).toBe(1);
+    expect(after.ticketsExpired).toBe(0);
+    expect(after.cpsPenalty).toBe(1);
+  });
+
+  it('OHNE triaging: P3 läuft nach SLA+1s normal ab', () => {
+    const s = createInitialState(0);
+    const withTicket = spawnTicket(s, () => 0.0); // p3
+    expect(withTicket.tickets[0].type).toBe('p3');
+    const after = updateTickets(withTicket, (SLA_SECONDS_BY_TYPE.p3 + 1) * 1000);
+    expect(after.tickets.length).toBe(0);
+    expect(after.ticketsExpired).toBe(1);
+  });
+
+  it('No-SLA-Ticket mit autoCloseTimer schließt automatisch (kein Expire)', () => {
+    // triaging => noSla für p3; bot => autoClose 5s für p3.
+    const s = { ...createInitialState(0), upgrades: { triaging: 1, bot: 1 } };
+    const withTicket = spawnTicket(s, () => 0.0); // p3
+    expect(withTicket.tickets[0].type).toBe('p3');
+    expect(withTicket.tickets[0].autoCloseTimer).toBeGreaterThan(0);
+    const after = updateTickets(withTicket, 6000); // > autoClose 5s
+    expect(after.tickets.length).toBe(0); // Ticket weg
+    expect(after.ticketsExpired).toBe(0); // aber NICHT als Expire gezählt
+  });
+});

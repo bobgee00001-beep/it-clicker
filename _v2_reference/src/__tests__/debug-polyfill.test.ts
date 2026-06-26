@@ -24,8 +24,10 @@ describe('document polyfill load order', () => {
       configurable: true,
     });
 
+    // Pfad relativ zur Testdatei auflösen — portabel über alle Maschinen
+    // (vorher hartkodierter Mac-Pfad /Users/bob/workspace/...).
     // @ts-ignore dynamic import
-    const mod = await import('/Users/bob/workspace/it-clicker/_v2_reference/src/stores/game.ts');
+    const mod = await import(new URL('../stores/game.ts', import.meta.url).href);
     mod.game.init();
     console.log('listeners after init', listeners);
     expect(listeners.length).toBeGreaterThan(0);
