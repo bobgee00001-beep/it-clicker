@@ -10,7 +10,7 @@ import {
   SEV1_THRESHOLD_TICKETS,
   SEV1_TIMER_SECONDS,
 } from './config';
-import { autoCloseSeconds } from './itsm';
+import { autoCloseSeconds, hasNoSla } from './itsm';
 
 /** Default-Zufallszahl-Quelle (0..1). Für Tests wird rng() als Parameter injiziert. */
 export function defaultRng(): number {
@@ -59,6 +59,18 @@ export function spawnTicket(s: GameState, rng: () => number = defaultRng): GameS
 /** Einzelnes Ticket um dtMs vorrücken (SLA-Decay, Auto-Close, Expire). */
 function advanceTicket(s: GameState, t: Ticket, dtSeconds: number): { ticket: Ticket | null; expired: boolean } {
   const dt = toNonNeg(dtSeconds);
+  // Wenn die SLA für diesen Ticket-Typ aufgehoben ist (z.B. AI-Triaging-Upgrade):
+  // das Ticket läuft NIE ab (kein Expire, keine CPS-Penalty). Der autoCloseTimer
+  // tickt aber WEITER und schließt das Ticket, wenn er 0 erreicht. Nur die
+  // SLA-Decay/Expiry wird ausgesetzt, nicht der Auto-Close.
+  if (hasNoSla(s, t.type)) {
+    if (t.autoCloseTimer > 0) {
+      const closedTimer = Math.max(0, t.autoCloseTimer - dt);
+      if (closedTimer === 0) return { ticket: null, expired: false }; // Auto-Close, kein Penalty
+      return { ticket: { ...t, autoCloseTimer: closedTimer }, expired: false }; // sla eingefroren
+    }
+    return { ticket: { ...t }, expired: false }; // kein Timer, kein Ablauf -> Ticket bleibt
+  }
   if (t.sla > dt) {
     const remaining = t.sla - dt;
     const closedTimer = t.autoCloseTimer > 0 ? Math.max(0, t.autoCloseTimer - dt) : 0;
