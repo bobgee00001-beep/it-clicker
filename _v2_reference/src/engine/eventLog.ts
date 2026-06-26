@@ -77,8 +77,3 @@ export function filteredEntries(log: EventLog): GameEvent[] {
   if (!log.filterCategory) return log.entries;
   return log.entries.filter((e) => e.category === log.filterCategory);
 }
-
-/** Kategorie-Check, um Typos im Engine-Code abzufangen. */
-export function isValidCategory(cat: string): cat is EventCategory {
-  return ['ticket', 'sev1', 'deploy', 'achievement', 'economy', 'system'].includes(cat);
-}

@@ -130,7 +130,8 @@ function sanitizeGenerators(v: unknown): Record<string, number> {
   return out;
 }
 
-// Upgrades gegen die ID-Whitelist (UPGRADES) prüfen.
+// Upgrades: nur positive Integer-Level behalten (keine ID-Whitelist hier —
+// unbekannte IDs schaden nicht, die Engine ignoriert sie beim Auswerten).
 function sanitizeUpgrades(v: unknown): Record<string, number> {
   if (!v || typeof v !== 'object') return {};
   const obj = v as Record<string, unknown>;
@@ -143,7 +144,8 @@ function sanitizeUpgrades(v: unknown): Record<string, number> {
   return out;
 }
 
-// Achievements gegen die ID-Whitelist (ACHIEVEMENTS); freigeschaltet = 1.
+// Achievements: jede ID mit positivem Integer-Level gilt als freigeschaltet (=1).
+// Keine ID-Whitelist hier — unbekannte IDs werden von der Engine ignoriert.
 function sanitizeAchievements(v: unknown): Record<string, number> {
   if (!v || typeof v !== 'object') return {};
   const obj = v as Record<string, unknown>;

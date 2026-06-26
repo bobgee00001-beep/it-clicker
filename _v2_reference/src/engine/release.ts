@@ -1,6 +1,6 @@
 // Release Train: vollständiger Deploy-Lebenszyklus (Build→Test→Staging→Deploy→Observe).
 // Pure Functions — KEINE DOM-Abhängigkeiten, KEIN Date.now(). Zeit via dtMs / Parameter.
-import type { GameState, DeploymentQuality } from './types';
+import type { GameState } from './types';
 import {
   RELEASE_STAGES,
   RELEASE_DEPLOY_BONUS_SECONDS,
@@ -16,7 +16,7 @@ export function canStartDeploy(s: GameState): boolean {
 }
 
 /** Release Train starten: Status → building. */
-export function startDeploy(s: GameState, nowMs: number = 0): GameState {
+export function startDeploy(s: GameState, _nowMs: number = 0): GameState {
   if (!canStartDeploy(s)) {
     const reason = s.sev1Active
       ? 'SEV1 aktiv: Change Freeze.'

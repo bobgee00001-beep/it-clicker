@@ -3,34 +3,11 @@
 import type { GameState, TicketType } from './types';
 import { UPGRADES, ACHIEVEMENTS } from './config';
 
-function upgradeLevel(s: GameState, id: string): number {
-  return s.upgrades[id] ?? 0;
-}
-
 interface ItsmRule {
   autoCloseSeconds: number;
   noSla: boolean;
   cpsPerTicket?: number;
 }
-
-function itsmTargets(): { type: 'p3' | 'p2' | 'p1' | 'all'; rule: ItsmRule }[] {
-  const out: { type: 'p3' | 'p2' | 'p1' | 'all'; rule: ItsmRule }[] = [];
-  for (const u of UPGRADES) {
-    if (u.target.kind === 'itsm' && upgradeLevel(EMPTY_STATE, u.id) >= 0) continue; // Nur Struktur, Level irrelevant hier
-    if (u.target.kind === 'itsm') {
-      out.push({ type: u.target.itsmType, rule: u.target });
-    }
-  }
-  for (const a of ACHIEVEMENTS) {
-    if (a.target.kind === 'itsm') {
-      out.push({ type: a.target.itsmType, rule: a.target });
-    }
-  }
-  return out;
-}
-
-// Leerer State für reine Definition-Iteration (nur UPGRADES/ACHIEVEMENTS werden gelesen).
-const EMPTY_STATE: GameState = {} as unknown as GameState;
 
 function mergeRules(rules: ItsmRule[]): ItsmRule {
   let autoCloseSeconds = 0;

@@ -13,9 +13,9 @@ import {
   getGenerator,
   getUpgrade,
 } from './config';
-import { workerCpsScaled, isWorker, workerClickRatePerSec, workerTicksForDt } from './workers';
+import { workerCpsScaled, isWorker } from './workers';
 import { cpsPerTicketBonus } from './itsm';
-import { additiveClickPowerScaled, effectiveClickScaled as clickBoostEffectiveClickScaled } from './clickBoost';
+import { effectiveClickScaled as clickBoostEffectiveClickScaled } from './clickBoost';
 import {
   spawnTicket as engineSpawnTicket,
   updateTickets,
@@ -24,7 +24,6 @@ import {
   decayCpsPenalty,
 } from './tickets';
 import { createEventLog, addEvent, type EventLog } from './eventLog';
-import { SEV1_THRESHOLD_TICKETS } from './config';
 import {
   checkPagerDuty,
   checkMondayMorning,
@@ -183,10 +182,6 @@ function mulReduce(r: Rational, num: bigint, den: bigint): Rational {
   const d = r.den * den;
   const g = gcdBig(n, d);
   return { num: n / g, den: d / g };
-}
-
-function divFloor(num: bigint, den: bigint): bigint {
-  return num / den;
 }
 
 function reduceRat(r: Rational): Rational {

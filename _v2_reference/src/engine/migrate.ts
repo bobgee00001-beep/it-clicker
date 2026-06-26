@@ -282,7 +282,6 @@ function extractGeneratorPurchasesFromUpgrades(
   if (!legacyFlat) return {};
   const v = state.upgrades;
   if (!v || typeof v !== 'object') return {};
-  const validUpgradeIds = new Set(UPGRADE_IDS);
   const obj = v as Record<string, unknown>;
   const out: Record<string, number> = {};
   const movedKeys: string[] = [];
@@ -623,11 +622,10 @@ function buildGameState(
   // Legacy: v1 hat `totalClicks` statt `clicks`.
   const clicksRaw = state.clicks !== undefined ? state.clicks : state.totalClicks;
   const clicks = toNonNegBigInt(clicksRaw, 0n);
-  if (clicksRaw !== undefined && clicks !== toNonNegBigInt(clicksRaw, 0n)) {
-    // no-op: wird oben bereits berechnet; für Issue-Check wäre Duplikat.
-  }
 
   const nowMs = Date.now();
+  // Einmal sanitizen statt zweimal (sonst würde ein Issue doppelt gemeldet).
+  const releaseStageIndexSan = sanitizeNonNegInt(state, 'releaseStageIndex', 0, issues);
 
   return {
     cyclesScaled: sanitizeScaled(state, 'cyclesScaled', 0n, issues),
@@ -669,7 +667,7 @@ function buildGameState(
     failedDeploys: sanitizeNonNegInt(state, 'failedDeploys', 0, issues),
     lastDeployAt: sanitizeNullableNumber(state, 'lastDeployAt', null, issues),
     releaseStatus: sanitizeReleaseStatus(state, 'releaseStatus', 'idle', issues),
-    releaseStageIndex: sanitizeNonNegInt(state, 'releaseStageIndex', 0, issues) === 0 && state.releaseStageIndex === -1 ? -1 : sanitizeNonNegInt(state, 'releaseStageIndex', 0, issues),
+    releaseStageIndex: releaseStageIndexSan === 0 && state.releaseStageIndex === -1 ? -1 : releaseStageIndexSan,
     releaseStageTimer: sanitizeNonNegFloat(state, 'releaseStageTimer', 0, issues),
     releaseDeployBonusTimer: sanitizeNonNegFloat(state, 'releaseDeployBonusTimer', 0, issues),
     releaseDeployBonusMultiplier: sanitizeNonNegFloat(state, 'releaseDeployBonusMultiplier', 1, issues),
