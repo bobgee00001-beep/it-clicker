@@ -593,8 +593,11 @@ function produce(
   } else {
     const penaltyActive = s.cpsPenaltyTimer > 0 && s.cpsPenalty !== 1;
     const bonusActive = s.releaseDeployBonusTimer > 0 && s.releaseDeployBonusMultiplier !== 1;
-    const penaltyEndMs = penaltyActive ? Math.max(0, Math.floor(s.cpsPenaltyTimer * 1000)) : 0;
-    const bonusEndMs = bonusActive ? Math.max(0, Math.floor(s.releaseDeployBonusTimer * 1000)) : 0;
+    // round (nicht floor): Timer sind Float-Sekunden; round minimiert den
+    // ±1ms-Boundary-Drift aus Float-Akkumulation. Voll partitionsfest wären
+    // Integer-ms-Timer (Follow-up — würde tickets.ts/release.ts/save mitziehen).
+    const penaltyEndMs = penaltyActive ? Math.max(0, Math.round(s.cpsPenaltyTimer * 1000)) : 0;
+    const bonusEndMs = bonusActive ? Math.max(0, Math.round(s.releaseDeployBonusTimer * 1000)) : 0;
     // Distinkte Grenzen STRICT innerhalb (0, dt); Grenze == dt bleibt im letzten Segment.
     const bounds = [...new Set([penaltyEndMs, bonusEndMs])].filter((b) => b > 0 && b < dt).sort((a, b) => a - b);
     const points = [0, ...bounds, dt];
@@ -611,6 +614,9 @@ function produce(
     }
   }
 
+  // Basis-Worker-Ertrag (Stat/Persistenz, NICHT reward-relevant — kein Achievement
+  // liest workerEarnedScaled). Bewusst UN-faktoriert; die temporal-faktorierte
+  // Worker-Produktion fließt korrekt in `gained` ein.
   const workerEarned = includeWorkerCps ? (workerCps * BigInt(dt)) / 1000n : 0n;
   return {
     state: {
@@ -664,6 +670,34 @@ export function tick(s: GameState, dtMs: number, nowMs?: number): GameState {
   return evaluateAchievements(state);
 }
 
+// Altert die zeit-begrenzten temporalen Effekte (SLA-Penalty, Deploy-Bonus) um
+// elapsedMs und normalisiert abgelaufene Zustände. Genutzt im Offline-Pfad: die
+// Effekte laufen während der Abwesenheit ab, statt eingefroren zu bleiben.
+function ageTemporalTimers(s: GameState, elapsedMs: number): GameState {
+  const dtSec = Math.max(0, elapsedMs) / 1000;
+  let next = s;
+  if (next.cpsPenaltyTimer > 0) {
+    const t = Math.max(0, next.cpsPenaltyTimer - dtSec);
+    next = t === 0 ? { ...next, cpsPenaltyTimer: 0, cpsPenalty: 1 } : { ...next, cpsPenaltyTimer: t };
+  }
+  if (next.releaseDeployBonusTimer > 0) {
+    const t = Math.max(0, next.releaseDeployBonusTimer - dtSec);
+    if (t === 0) {
+      next = {
+        ...next,
+        releaseDeployBonusTimer: 0,
+        releaseDeployBonusMultiplier: 1,
+        releaseStatus: next.releaseStatus === 'success' ? 'idle' : next.releaseStatus,
+        releaseStageIndex: next.releaseStatus === 'success' ? -1 : next.releaseStageIndex,
+        releaseMessage: next.releaseStatus === 'success' ? 'Change Window bereit.' : next.releaseMessage,
+      };
+    } else {
+      next = { ...next, releaseDeployBonusTimer: t };
+    }
+  }
+  return next;
+}
+
 // Offline-Earnings: NUR passive Produktion (harte Whitelist aus DESIGN.md),
 // über Δt akkumuliert (gleiche accrue-Logik wie online), gedeckelt. Keine
 // Auto-Buyer/Achievements/Zufall offline. Math.trunc gegen fraktionale lastSavedMs.
@@ -671,9 +705,14 @@ export function applyOffline(
   s: GameState,
   nowMs: number,
 ): { state: GameState; gainedScaled: bigint; elapsedMs: number } {
-  const elapsedMs = Math.max(0, Math.min(Math.trunc(nowMs - s.lastSavedMs), OFFLINE_CAP_MS));
+  const rawElapsedMs = Math.max(0, Math.trunc(nowMs - s.lastSavedMs));
+  const elapsedMs = Math.min(rawElapsedMs, OFFLINE_CAP_MS);
   const { state: produced, gainedScaled } = produce(s, elapsedMs, false, false);
-  return { state: { ...produced, lastSavedMs: nowMs }, gainedScaled, elapsedMs };
+  // Temporale Timer altern über die ECHTE (ungedeckelte) Abwesenheit — sonst
+  // überlebt ein Deploy-Bonus/SLA-Penalty die Offline-Lücke und wird online
+  // nachgeholt (Exploit). Produktion selbst bleibt strikt passiv (Whitelist).
+  const aged = ageTemporalTimers({ ...produced, lastSavedMs: nowMs }, rawElapsedMs);
+  return { state: aged, gainedScaled, elapsedMs };
 }
 
 // --- Prestige (IPO-Layer) -------------------------------------------------

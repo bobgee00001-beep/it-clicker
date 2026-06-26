@@ -9,6 +9,7 @@ import {
   tick,
   productionPerSecScaled,
   productionPassiveRateScaled,
+  applyOffline,
 } from '../engine';
 import { performRollback, canStartDeploy } from '../release';
 import { getGenerator, ACHIEVEMENTS } from '../config';
@@ -140,5 +141,42 @@ describe('Release-Zyklus schließt nach Rollback / Bonus-Ablauf (kein Soft-Lock)
     const after = tick(s, 1_000);
     expect(after.releaseStatus).toBe('idle');
     expect(canStartDeploy(after)).toBe(true);
+  });
+});
+
+describe('Offline: temporale Effekte altern (kein Bonus-übersteht-Offline-Exploit)', () => {
+  it('Deploy-Bonus läuft während langer Offline-Abwesenheit ab', () => {
+    // Save mit aktivem Bonus (60s), dann 5min offline -> Bonus muss abgelaufen sein.
+    const s = withRack({
+      lastSavedMs: 0,
+      releaseStatus: 'success',
+      releaseDeployBonusTimer: 60,
+      releaseDeployBonusMultiplier: 1.5,
+    });
+    const { state } = applyOffline(s, 5 * 60_000);
+    expect(state.releaseDeployBonusTimer).toBe(0);
+    expect(state.releaseDeployBonusMultiplier).toBe(1);
+    expect(state.releaseStatus).toBe('idle');
+  });
+
+  it('SLA-Penalty läuft offline ab', () => {
+    const s = withRack({ lastSavedMs: 0, cpsPenalty: 0.8, cpsPenaltyTimer: 30 });
+    const { state } = applyOffline(s, 2 * 60_000);
+    expect(state.cpsPenaltyTimer).toBe(0);
+    expect(state.cpsPenalty).toBe(1);
+  });
+
+  it('Offline-Produktion bleibt rein passiv (kein Bonus auf den Gewinn)', () => {
+    // Mit aktivem Bonus: der Offline-Gewinn darf NICHT ×1.5 sein (Whitelist).
+    const withBonus = withRack({
+      lastSavedMs: 0,
+      releaseStatus: 'success',
+      releaseDeployBonusTimer: 100_000, // groß genug, dass er die Offline-Zeit überlebt
+      releaseDeployBonusMultiplier: 1.5,
+    });
+    const plain = withRack({ lastSavedMs: 0 });
+    const gainBonus = applyOffline(withBonus, 10_000).gainedScaled;
+    const gainPlain = applyOffline(plain, 10_000).gainedScaled;
+    expect(gainBonus).toBe(gainPlain); // temporaler Faktor wirkt offline NICHT
   });
 });
