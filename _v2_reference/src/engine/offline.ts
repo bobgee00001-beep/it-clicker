@@ -17,8 +17,10 @@ export type OfflineResult = {
  *
  * - elapsedMs wird auf OFFLINE_CAP_MS gedeckelt.
  * - Unter OFFLINE_MIN_MS wird sofort returned (gainedScaled = 0n).
- * - Gewinn = productionPerSecScaled * elapsedMs * OFFLINE_PENALTY (nur passive
- *   Produktion — keine Worker/Achievements/Tickets).
+ * - Gewinn: engineApplyOffline() akkumuliert die passive Basisrate über elapsedMs
+ *   mit Rest-Übertrag (accrue, kein temporaler Faktor, keine Worker/Achievements/
+ *   Tickets — Whitelist); danach wird OFFLINE_PENALTY auf den Gewinn angewandt
+ *   (nicht auf die Rate, damit Übertrag/Floor-Invarianten erhalten bleiben).
  * - lastSavedMs wird auf `nowMs` gesetzt, lastOnline optional gefüllt.
  */
 export function applyOfflineEarnings(s: GameState, nowMs: number): OfflineResult {
