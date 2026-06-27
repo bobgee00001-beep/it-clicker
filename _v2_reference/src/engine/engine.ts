@@ -155,7 +155,7 @@ export function createInitialState(nowMs: number): GameState {
     shares: 0n,
     prodRemainder: 0n,
     lastSavedMs: nowMs,
-    version: ENGINE_VERSION as 5,
+    version: ENGINE_VERSION as 6,
     eventLog: createEventLog(),
   };
 }
@@ -765,6 +765,6 @@ export function applyPrestige(s: GameState): GameState {
     achievements: s.achievements, // PERMANENT über Prestige (nie zurückgesetzt)
     clicks: s.clicks, // Lifetime-Klicks bleiben
     shares: s.shares + gain,
-    version: ENGINE_VERSION as 5,
+    version: ENGINE_VERSION as 6,
   });
 }

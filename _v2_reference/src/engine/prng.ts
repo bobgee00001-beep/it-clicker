@@ -22,9 +22,12 @@
 // den integer Risk-Threshold-Vergleich (`rollBp < riskBp`).
 //
 // Determinismus-Notiz zu JS bigint:
-//   Wir rechnen mod 2^64 via `& MASK_64`. JS `bigint >> n` ist signed
-//   right-shift — auf u64-Werten (alle < 2^63 nach wrap-around) ist das
-//   identisch mit unsigned right-shift. Daher keine Sonderbehandlung nötig.
+//   Wir rechnen mod 2^64 via `& MASK_64`. Nach u64()-Wrap koennen Werte
+//   >= 2^63 sein (BigInt bleibt positiv dank unsigned-Semantik durch
+//   & MASK_64). JS `bigint >> n` ist signed right-shift (auffuellt mit
+//   Vorzeichenbit) — bei u64-Werten, die nach Wrap als positive BigInts
+//   repraesentiert sind, ist signed >> sicher, weil kein negatives Bit
+//   existiert. Daher keine Sonderbehandlung noetig.
 export const SPLITMIX_GAMMA = 0x9E37_79B9_7F4A_7C15n;
 const SPLITMIX_C1 = 0xBF58_476D_1CE4_E5B9n;
 const SPLITMIX_C2 = 0x94D0_49BB_1331_11EBn;
@@ -47,4 +50,21 @@ export function splitmix64(z: bigint): bigint {
 export function splitmix64Modulo(z: bigint, mod: bigint): bigint {
   if (mod <= 0n) throw new RangeError(`splitmix64Modulo: mod must be positive, got ${mod}`);
   return splitmix64(z) % mod;
+}
+
+/**
+ * Kanonisiert einen bigint-Wert auf u64-Range.
+ *
+ * Wird beim Laden / Migrieren von rngSeed aus Save-Payloads verwendet, damit
+ * der gespeicherte Literalwert dem entspricht, was splitmix64 intern sieht.
+ * Sonst: prng.ts maskiert deterministisch (& MASK_64), aber der State-Wert
+ * koennte literal > 2^64 sein — Server-PIN-Validator (Phase 3) ohne mod-2^64
+ * wuerde divergieren. Mit dieser Funktion ist rngSeed IMMER exakt in u64-Range
+ * sobald er im State landet, egal was im Save stand.
+ *
+ * Hostile/defekte Saves (rngSeed > 2^64 oder < 0) werden so repariert, ohne
+ * dass die Berechnung divergiert.
+ */
+export function toU64(x: bigint): bigint {
+  return x & MASK_64;
 }

@@ -13,6 +13,7 @@ import {
 import { ENGINE_VERSION, FIRST_NATIVE_VERSION, UPGRADES, ACHIEVEMENTS, GENERATORS, RNG_DEFAULT_SEED } from './config';
 import { createEventLog, type EventLog, type Severity, type EventCategory } from './eventLog';
 import { numberOr, boolOr, stringOr, toNonNegBigInt } from '../lib/fallbacks';
+import { toU64 } from './prng';
 
 const MIGRATION_ISSUE_CATEGORY: EventCategory = 'system';
 const MIGRATION_ISSUE_SEVERITY: Severity = 'warning';
@@ -746,7 +747,12 @@ function buildGameState(
     //     injectV5ToV6 wurden bereits gesetzt; hier nur sanitisieren.
     //   - sanitizeScaled akzeptiert bigint und string-kodierte bigints.
     //   - toNonNegBigInt akzeptiert ebenfalls beide Formen.
-    rngSeed: sanitizeScaled(state, 'rngSeed', RNG_DEFAULT_SEED, issues),
+    //   - toU64 (Georg's Politur #2, 2026-06-26): kanonisiert rngSeed auf
+    //     exakt u64-Range, damit der State-Wert dem entspricht, was splitmix64
+    //     intern sieht. Sonst: prng maskiert deterministisch, aber der State-
+    //     Wert koennte literal > 2^64 sein und ein Server-Validator ohne
+    //     mod-2^64 wuerde divergieren.
+    rngSeed: toU64(sanitizeScaled(state, 'rngSeed', RNG_DEFAULT_SEED, issues)),
     deployCounter: toNonNegBigInt(state.deployCounter, 0n),
     version: ENGINE_VERSION,
     // Initiale Snapshot — wird nach der Schluss-Iteration ueberschrieben

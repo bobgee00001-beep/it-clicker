@@ -6,6 +6,7 @@ import { SCALE, type GameState, type Ticket, type SpendEvent } from './types';
 import { ENGINE_VERSION, RNG_DEFAULT_SEED } from './config';
 import { createEventLog, type EventLog } from './eventLog';
 import { migrateSavePayload } from './migrate';
+import { toU64 } from './prng';
 
 const KEY = 'it-clicker-v2:save';
 
@@ -367,7 +368,12 @@ export function legacyDeserialize(raw: string): GameState | null {
     // rngSeed MUSS aus dem Save kommen, sonst verliert der Spieler seine
     // Roll-History. deployCounter MUSS aus dem Save kommen, sonst weicht
     // der naechste Roll vom Server-Validator ab.
-    rngSeed: r.rngSeed !== undefined ? toNonNegBigInt(r.rngSeed, RNG_DEFAULT_SEED) : RNG_DEFAULT_SEED,
+    // toU64 (Georg's Politur #2, 2026-06-26): kanonisiert rngSeed auf exakte
+    // u64-Range, damit der State-Wert dem entspricht, was splitmix64 intern
+    // sieht. Sonst: prng maskiert deterministisch, aber der literal State-
+    // Wert koennte > 2^64 sein und ein Server-Validator ohne mod-2^64
+    // wuerde divergieren.
+    rngSeed: toU64(r.rngSeed !== undefined ? toNonNegBigInt(r.rngSeed, RNG_DEFAULT_SEED) : RNG_DEFAULT_SEED),
     deployCounter: toNonNegBigInt(r.deployCounter, 0n),
     version: Number.isInteger(r.version) ? (r.version as number) : ENGINE_VERSION,
     eventLog: sanitizeEventLog(r.eventLog),
