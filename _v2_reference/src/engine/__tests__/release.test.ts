@@ -204,4 +204,67 @@ describe('Stage 5: Release Train + Observability', () => {
     expect(s.releaseDeployBonusMultiplier).toBe(1.5);
     expect(s.achievements.release_manager).toBe(1);
   });
+
+  // [C] lastDeployAt-Timestamp: nowMs muss vom Caller bis finishDeploy durchgereicht
+  // werden, sonst landen UI-Evidence-Texte mit Timestamp 0 oder dem Vorgaenger-Wert.
+  describe('lastDeployAt-Timestamp (nowMs durchgereicht)', () => {
+    it('startDeploy(s, 12345) setzt lastDeployAt = 12345', () => {
+      const s = createInitialState(0);
+      const after = startDeploy(s, 12_345);
+      expect(after.lastDeployAt).toBe(12_345);
+    });
+
+    it('startDeploy(s, 0) ohne expliziten Time erhaelt bestehenden lastDeployAt (oder null)', () => {
+      // Frischer State: lastDeployAt = null, nach startDeploy(s, 0) immer noch null.
+      const fresh = createInitialState(0);
+      const started = startDeploy(fresh, 0);
+      expect(started.lastDeployAt).toBeNull();
+
+      // Existierender lastDeployAt bleibt erhalten, wenn startDeploy ohne Time aufgerufen wird.
+      const withTime = { ...createInitialState(0), lastDeployAt: 9999 };
+      const startedAgain = startDeploy(withTime, 0);
+      expect(startedAgain.lastDeployAt).toBe(9999);
+    });
+
+    it('finishDeploy mit nowMs setzt lastDeployAt im Erfolgs- und Fehlerpfad', () => {
+      const s = createInitialState(0);
+      const started = startDeploy(s, 0);
+      // Erfolg: expliziter nowMs ueberschreibt alles.
+      const success = finishDeploy(started, undefined, 50_000);
+      expect(success.lastDeployAt).toBe(50_000);
+      expect(success.lastReleaseEvidence).toContain('50000');
+
+      // Fehler: expliziter nowMs ueberschreibt.
+      const failed = finishDeploy(started, () => 0, 51_000);
+      expect(failed.lastDeployAt).toBe(51_000);
+      expect(failed.lastReleaseEvidence).toContain('51000');
+    });
+
+    it('updateReleaseTrain mit nowMs propagiert Timestamp bei Stage-Ende', () => {
+      // 40s dt laesst den Deploy komplett durchlaufen -> finishDeploy wird
+      // aufgerufen, muss den withgereichten nowMs uebernehmen.
+      const s = createInitialState(0);
+      const started = startDeploy(s, 0);
+      const finished = updateReleaseTrain(started, 40_000, undefined, 77_777);
+      expect(finished.releaseStatus).toBe('success');
+      expect(finished.lastDeployAt).toBe(77_777);
+      expect(finished.lastReleaseEvidence).toContain('77777');
+    });
+
+    it('tick(s, dtMs, nowMs) propagiert nowMs an updateReleaseTrain -> finishDeploy', () => {
+      // Vollstaendiger Pfad: tick() -> updateReleaseTrain -> finishDeploy mit nowMs.
+      const s = createInitialState(0);
+      const started = startDeploy(s, 0);
+      const finished = tick(started, 40_000, 88_888);
+      expect(finished.releaseStatus).toBe('success');
+      expect(finished.lastDeployAt).toBe(88_888);
+    });
+
+    it('finishDeploy ohne nowMs laesst bestehenden lastDeployAt unveraendert', () => {
+      const s = createInitialState(0);
+      const started = { ...startDeploy(s, 0), lastDeployAt: 42_000 };
+      const finished = finishDeploy(started);
+      expect(finished.lastDeployAt).toBe(42_000);
+    });
+  });
 });
