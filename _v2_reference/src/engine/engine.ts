@@ -10,6 +10,7 @@ import {
   OFFLINE_CAP_MS,
   PRESTIGE_THRESHOLD_SCALED,
   SHARE_MULT_BASE,
+  RNG_DEFAULT_SEED,
   getGenerator,
   getUpgrade,
 } from './config';
@@ -125,6 +126,12 @@ export function createInitialState(nowMs: number): GameState {
     releaseMessage: 'Change Window bereit.',
     rollbacksPerformed: 0,
     lastRollbackAt: null,
+    // Determinismus-Kern (Phase-3 Leaderboard): rngSeed ist eine fixe
+    // 64-bit-Konstante aus config, deployCounter startet bei 0 und steigt
+    // pro Deploy in startDeploy(). Strikt ONLINE — offline ändert sich der
+    // Counter NICHT (Whitelist: applyOffline ruft updateReleaseTrain nicht).
+    rngSeed: RNG_DEFAULT_SEED,
+    deployCounter: 0n,
     errorBudget: 100,
     observabilityScore: 82,
     activeIncidents: 0,
@@ -148,7 +155,7 @@ export function createInitialState(nowMs: number): GameState {
     shares: 0n,
     prodRemainder: 0n,
     lastSavedMs: nowMs,
-    version: ENGINE_VERSION as 5,
+    version: ENGINE_VERSION as 6,
     eventLog: createEventLog(),
   };
 }
@@ -758,6 +765,6 @@ export function applyPrestige(s: GameState): GameState {
     achievements: s.achievements, // PERMANENT über Prestige (nie zurückgesetzt)
     clicks: s.clicks, // Lifetime-Klicks bleiben
     shares: s.shares + gain,
-    version: ENGINE_VERSION as 5,
+    version: ENGINE_VERSION as 6,
   });
 }

@@ -3,9 +3,10 @@
 // localStorage is only touched by clearCorruptSave() and the legacy save()/load()/clearSave() wrappers.
 // deserialize/importPayload auto-migrate v1/v2/v3/v4/v5 via migrate.ts.
 import { SCALE, type GameState, type Ticket, type SpendEvent } from './types';
-import { ENGINE_VERSION } from './config';
+import { ENGINE_VERSION, RNG_DEFAULT_SEED } from './config';
 import { createEventLog, type EventLog } from './eventLog';
 import { migrateSavePayload } from './migrate';
+import { toU64 } from './prng';
 
 const KEY = 'it-clicker-v2:save';
 
@@ -61,6 +62,11 @@ const BIGINT_FIELDS: (keyof GameState)[] = [
   'passiveEarnedSinceLastClick',
   'maxCyclesWithoutUpgrades',
   'shares',
+  // Determinismus-Kern (Phase-3 Leaderboard): rngSeed und deployCounter
+  // sind bigint und werden wie die Scaled-Felder als String serialisiert.
+  // Re-Verifier liest sie via toNonNegBigInt zurueck (in migrate.ts).
+  'rngSeed',
+  'deployCounter',
 ];
 
 // Helfer: bestätige number >= 0.
@@ -358,6 +364,17 @@ export function legacyDeserialize(raw: string): GameState | null {
     currentTab: typeof r.currentTab === 'string' ? r.currentTab : 'hardware',
     shares: toNonNegBigInt(r.shares, 0n),
     lastSavedMs: toNonNegInt(r.lastSavedMs, Date.now()),
+    // Determinismus-Kern: rngSeed und deployCounter aus Save (oder Default).
+    // rngSeed MUSS aus dem Save kommen, sonst verliert der Spieler seine
+    // Roll-History. deployCounter MUSS aus dem Save kommen, sonst weicht
+    // der naechste Roll vom Server-Validator ab.
+    // toU64 (Georg's Politur #2, 2026-06-26): kanonisiert rngSeed auf exakte
+    // u64-Range, damit der State-Wert dem entspricht, was splitmix64 intern
+    // sieht. Sonst: prng maskiert deterministisch, aber der literal State-
+    // Wert koennte > 2^64 sein und ein Server-Validator ohne mod-2^64
+    // wuerde divergieren.
+    rngSeed: toU64(r.rngSeed !== undefined ? toNonNegBigInt(r.rngSeed, RNG_DEFAULT_SEED) : RNG_DEFAULT_SEED),
+    deployCounter: toNonNegBigInt(r.deployCounter, 0n),
     version: Number.isInteger(r.version) ? (r.version as number) : ENGINE_VERSION,
     eventLog: sanitizeEventLog(r.eventLog),
   };

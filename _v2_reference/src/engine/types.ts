@@ -245,6 +245,14 @@ export interface GameState {
   rollbacksPerformed: number;
   lastRollbackAt: number | null;
 
+  // ── Determinismus-Kern (Phase-3 Leaderboard) ─────────────────────────────
+  // rngSeed: einmaliger Seed (deterministisch oder server-pinned in Phase 3).
+  // deployCounter: monoton steigend pro Deploy-Versuch; mit rngSeed gefuettert
+  // in splitmix64() ergibt den roll fuer finishDeploy. Strikt ONLINE — offline
+  // darf deployCounter NICHT inkrementiert werden, sonst Online/Offline-Drift.
+  rngSeed: bigint;
+  deployCounter: bigint;
+
   // ── Observability ────────────────────────────────────────────────────────
   errorBudget: number;
   observabilityScore: number;

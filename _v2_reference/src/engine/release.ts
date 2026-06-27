@@ -9,13 +9,19 @@ import {
 } from './config';
 import { addEvent } from './eventLog';
 import { evaluateAchievements } from './achievements';
+import { splitmix64Modulo, SPLITMIX_GAMMA } from './prng';
+
+// Basispunkt-Skala fuer den integer Risk-Threshold-Vergleich (riskBp = round(risk*10000)).
+// Risk [0, 1] wird zu [0, 10000] quantisiert — danach reiner Integer-Vergleich.
+const RISK_BP_SCALE = 10000n;
 
 /** Voraussetzungen für Deploy-Start prüfen. */
 export function canStartDeploy(s: GameState): boolean {
   return s.releaseStatus === 'idle' && !s.sev1Active && s.tickets.length <= 5;
 }
 
-/** Release Train starten: Status → building. Setzt lastDeployAt, wenn nowMs > 0. */
+/** Release Train starten: Status → building. Setzt lastDeployAt (wenn nowMs > 0)
+ *  und inkrementiert deployCounter (Determinismus-Kern fuer Phase-3 Leaderboard). */
 export function startDeploy(s: GameState, nowMs: number = 0): GameState {
   if (!canStartDeploy(s)) {
     const reason = s.sev1Active
@@ -31,6 +37,14 @@ export function startDeploy(s: GameState, nowMs: number = 0): GameState {
     ...s,
     deploysStarted: s.deploysStarted + 1,
     lastDeployAt: nowMs > 0 ? nowMs : s.lastDeployAt ?? null,
+    // deployCounter NUR auf erfolgreichem Start inkrementieren — NACH dem
+    // canStartDeploy-Check (oben). Blockierte Versuche (SEV1/zu viele Tickets)
+    // returnen frueh ohne Counter-Update. Sonst zaehlen blockierte Versuche
+    // mit und ein Re-Verifier, der ueber deployCounter reproduziert (Phase-3
+    // Leaderboard), laeuft auseinander. Strikt ONLINE: applyOffline ruft
+    // updateReleaseTrain nicht auf, also wird deployCounter offline nie
+    // inkrementiert -> Online/Offline-Drift aus.
+    deployCounter: s.deployCounter + 1n,
     releaseStatus: 'building',
     releaseStageIndex: 0,
     releaseStageTimer: stageDurationSeconds(0),
@@ -167,16 +181,56 @@ function updateDeployBonusTimer(s: GameState, dtMs: number): GameState {
 }
 
 /**
- * Deploy abschließen: Erfolg oder Fehler per Zufall gegeben Risiko.
- * @param successChance - Optional rng (0..1); bei undefined IMMER Erfolg (deterministische Tests).
- * @param nowMs - Optional: Zeitpunkt des Deploy-Abschlusses. Wenn > 0 wird lastDeployAt
- *                damit gesetzt (sonst Fallback auf s.lastDeployAt). Wirkt sich auf UI-
- *                Evidence-Texte (lastReleaseEvidence) aus.
+ * Deploy abschließen: Erfolg oder Fehler per deterministischem Roll gegeben Risiko.
+ *
+ * Determinismus-Kontrakt (Phase-3 Leaderboard):
+ *   roll = splitmix64(rngSeed + deployCounter * SPLITMIX_GAMMA) % 10000   // [0, 10000), integer
+ *   riskBp = Math.round(calculateRisk(s) * 10000)                        // [0, 10000], integer
+ *   failed = roll < riskBp
+ *
+ * calculateRisk() bleibt eine Float-Funktion (viele Float-Terme summieren sich
+ * — auf Rational zu refaktorisieren waere eine eigene Determinismus-Flaeche).
+ * Stattdessen EINE Float→Int-Bridge via round() am autoritativen Vergleichs-
+ * punkt — danach reiner Integer-Vergleich, kein Float im Roll-Pfad.
+ *
+ * Der successChance-Parameter bleibt fuer deterministische Tests (override),
+ * wird im Produktiv-Pfad NICHT genutzt.
+ *
+ * @param successChance - Optional rng (0..1); bei undefined Roll aus splitmix64
+ *                        (deterministisch). Bei Test-Override: successChance()
+ *                        liefert [0, 1), wird analog zu riskBp quantisiert.
+ *                        Wichtig: successChance()-Quantisierung liefert [0, 9999]
+ *                        (Floor + Min-Clamp), nicht [0, 10000] — sonst kann
+ *                        ()=>1 als 10000 quantisiert werden, waehrend der echte
+ *                        RNG-Pfad nie 10000 erreicht. Bei riskBp=10000 scheitert
+ *                        real immer, Override nie → keine Aequivalenz.
+ * @param nowMs - Optional: Zeitpunkt des Deploy-Abschlusses. Wenn > 0 wird
+ *                lastDeployAt damit gesetzt (sonst Fallback auf s.lastDeployAt).
+ *                Wirkt sich auf UI-Evidence-Texte (lastReleaseEvidence) aus.
  */
 export function finishDeploy(s: GameState, successChance?: () => number, nowMs: number = 0): GameState {
   const risk = calculateRisk(s);
-  const roll = successChance ? successChance() : 1; // ohne rng immer Erfolg (deterministische Tests)
-  const failed = roll < risk;
+  // riskBp: pinned integer, einmal pro finishDeploy-Aufruf. round() ist
+  // deterministisch (kein Banker's Rounding in JS — Math.round rundet
+  // halbe Werte nach +Inf, was konsistent ist fuer [0,1]-Floats).
+  // Domain: [0, 10000] — der echte Roll liegt in [0, 9999], also kann
+  // failed genau dann eintreten, wenn riskBp > 0.
+  const riskBp = Math.round(risk * 10000);
+  // Roll: splitmix64(rngSeed + deployCounter*GAMMA) mod 10000. Strikt ONLINE,
+  // weil deployCounter nur in startDeploy inkrementiert wird (Whitelist).
+  // Kollisionssicher (Georg's #2 Feinheit, 2026-06-26): counter * SPLITMIX_GAMMA
+  // als Spread statt naiver seed+counter-Addition. Bei per-User-Seeds (Phase 3
+  // Server-Pinning) wuerden sonst (seed=10,c=5) und (seed=14,c=1) kollidieren.
+  let rollBp: number;
+  if (successChance) {
+    // Test-Override: floor() (nicht round() — SplitMix64 mod 10000 ist floor-
+    // basiert) + Clamp auf [0, 9999] fuer Aequivalenz mit dem echten RNG-Pfad.
+    // Ohne Clamp: Math.round(1 * 10000) = 10000, was der echte Pfad nie erreicht.
+    rollBp = Math.min(9999, Math.max(0, Math.floor(successChance() * 10000)));
+  } else {
+    rollBp = Number(splitmix64Modulo(s.rngSeed + s.deployCounter * SPLITMIX_GAMMA, RISK_BP_SCALE));
+  }
+  const failed = rollBp < riskBp;
   // nowMs durchreichen: wenn explizit > 0, ist das der echte Abschluss-Zeitpunkt;
   // sonst Fallback auf den bereits gesetzten lastDeployAt (von startDeploy oder
   // vorigem finishDeploy). Niemals 0, wenn lastDeployAt schon einen Wert hat.

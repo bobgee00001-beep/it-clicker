@@ -78,3 +78,40 @@ describe('offline earnings', () => {
     expect(capped).toBe(false);
   });
 });
+
+describe('offline earnings — deployCounter discipline (v6 RNG)', () => {
+  it('applyOffline lässt deployCounter UNVERÄNDERT (strikt ONLINE)', () => {
+    // Georg's #1 + #3 Feinheit: deployCounter wird NUR in startDeploy inkrementiert
+    // (auf erfolgreichem Start). applyOffline ruft updateReleaseTrain NICHT auf
+    // (Whitelist: produce() ohne release-path). Wenn offline den Counter hochzählen
+    // würde, würde der Server-Validator in Phase 3 andere Roll-Werte berechnen
+    // als der Client (Online ≠ Offline → Audit-Fail).
+    const s = {
+      ...createInitialState(0),
+      deployCounter: 42n,
+      deploysStarted: 42,
+      rngSeed: 0xDEADBEEFCAFEBABEn,
+      lastSavedMs: 0,
+      generators: { rack: 1, ssd: 4 }, // 10 cps
+    } as GameState;
+    const now = 60 * 60 * 1000; // 1h offline
+    const { state: next } = applyOfflineEarnings(s, now);
+
+    expect(next.deployCounter).toBe(42n); // unverändert!
+    expect(next.deploysStarted).toBe(42); // legacy counter auch nicht
+    expect(next.rngSeed).toBe(0xDEADBEEFCAFEBABEn); // rngSeed sowieso nie mutiert
+  });
+
+  it('applyOffline auf counter=0: bleibt 0n (Regression-Schutz für frische Saves)', () => {
+    // Frischer Save aus v6-Migration (injectV5ToV6 setzt deployCounter=0n).
+    // Auch nach langer Offline-Zeit muss der Counter 0n bleiben, sonst zählt
+    // der erste Online-Deploy fälschlich als #1+offset.
+    const s = {
+      ...createInitialState(0),
+      generators: { rack: 1, ssd: 4 },
+    } as GameState;
+    expect(s.deployCounter).toBe(0n);
+    const { state: next } = applyOfflineEarnings(s, 25 * 60 * 60 * 1000);
+    expect(next.deployCounter).toBe(0n);
+  });
+});
