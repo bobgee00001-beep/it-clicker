@@ -5,8 +5,36 @@ import {
   type AchievementDef,
 } from './types';
 
-export const ENGINE_VERSION = 5; // v5: v1-State-Shape + Tickets/Achievements/Release/Observability
+export const ENGINE_VERSION = 6; // v6: + deterministischer Deploy-RNG (SplitMix64, counter-basiert)
 export const TICK_MS = 100; // Sim-Schrittweite
+
+// Save-Format-Grenze: ab dieser Version ist `upgrades` kanonisch und enthaelt
+// auch hybride IDs (server/vm/ssd), die gleichzeitig Generatoren sind. Vorher
+// (v1..v4, "Legacy-Flat") wurden Generator-Kaeufe im `upgrades`-Feld vermischt
+// und mussten bei Migration in `generators` umgelenkt werden — danach NICHT
+// mehr. Wenn ENGINE_VERSION weiter steigt (v7, v8, ...) bleibt dieser Wert
+// FIX auf 5; ein neuer "Legacy"-Cut wuerde eine neue Konstante rechtfertigen.
+//
+// WICHTIG: Das Migration-Gate (legacyFlat = fromVersion < FIRST_NATIVE_VERSION)
+// haengt an DIESER Konstante, NICHT an ENGINE_VERSION. Sonst wuerde ein
+// natives v5-Save nach Bump auf ENGINE_VERSION=6 als legacyFlat=true
+// klassifiziert und die Generator↔Upgrade-Umlenkung wieder aktiviert —
+// exakt die Korruption, die PR #10 (#7416f86) gefixt hat.
+export const FIRST_NATIVE_VERSION = 5;
+
+// Default-Seed fuer den deterministischen Deploy-Roll (Phase-3-Leaderboard).
+// FIX gewaehlt, damit Saves ohne rngSeed-Feld deterministisch denselben
+// Roll-Verlauf haben. Server (Phase 3) kann diesen Wert ueberschreiben
+// (Seed-Pinning), aber Client darf ihn nicht selbst waehlen — sonst kann
+// ein cheater einen guenstigen Seed suchen.
+//
+// 64-bit non-zero, exakt in u64-Range (16 Hex-Ziffern = 64 bit, NICHT 80).
+// WICHTIG: dieser Wert MUSS <= 2^64-1 sein — sonst kappen & MASK_64 in
+// prng.ts stillschweigend die oberen Bits, und ein Server-Validator, der
+// rngSeed als literalen State nimmt (ohne mod 2^64), wuerde divergieren.
+// Audit-fest: Wert als 0xC0FFEE5EEDC0FFEEn (Hex) = dezimal 13830554477654798062
+// (immer unter 2^64 = 18446744073709551616).
+export const RNG_DEFAULT_SEED = 0xC0FFEE5EEDC0FFEEn;
 
 // --- Prestige (IPO-Layer) -------------------------------------------------
 // Shares = isqrt(totalEarnedScaled / PRESTIGE_THRESHOLD_SCALED). Erste Share bei

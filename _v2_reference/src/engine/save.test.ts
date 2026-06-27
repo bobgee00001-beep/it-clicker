@@ -169,3 +169,64 @@ describe('clearCorruptSave', () => {
     expect(() => clearCorruptSave()).not.toThrow();
   });
 });
+
+describe('save serialize/deserialize — RNG-State Round-Trip (v6)', () => {
+  // Phase-3-Leaderboard-Kontrakt: rngSeed + deployCounter müssen exakt
+  // serialisiert/deserialisiert werden, sonst weicht der nächste Online-Roll
+  // vom Server-Validator ab (Audit-Fail). bigint-Werte > Number.MAX_SAFE_INTEGER
+  // sind der Härtetest — JSON kann die nicht ohne String-Kodierung transportieren.
+  it('rngSeed + deployCounter round-trip über serialize/deserialize', () => {
+    const s = {
+      ...createInitialState(1_700_000_000_000),
+      rngSeed: 0xDEADBEEF_CAFE_BABE_DEADBEEFn,
+      deployCounter: 1_234_567_890_123_456_789n, // > Number.MAX_SAFE_INTEGER
+    };
+    const back = deserialize(serialize(s))!;
+    expect(back.rngSeed).toBe(0xDEADBEEF_CAFE_BABE_DEADBEEFn);
+    expect(back.deployCounter).toBe(1_234_567_890_123_456_789n);
+    expect(typeof back.rngSeed).toBe('bigint');
+    expect(typeof back.deployCounter).toBe('bigint');
+  });
+
+  it('RNG_DEFAULT_SEED round-trip bei frischem createInitialState', () => {
+    // Nach createInitialState sind rngSeed = RNG_DEFAULT_SEED und deployCounter = 0n.
+    // Speichern + Laden muss diese Werte exakt zurückbringen.
+    const s = createInitialState(1_700_000_000_000);
+    const back = deserialize(serialize(s))!;
+    expect(back.rngSeed).toBe(s.rngSeed);
+    expect(back.deployCounter).toBe(0n);
+  });
+
+  it('exportPayload/importPayload erhält rngSeed + deployCounter', () => {
+    const s = {
+      ...createInitialState(1_700_000_000_000),
+      rngSeed: 0xFEEDFACE_C0FFEE_1234_5678n,
+      deployCounter: 999n,
+    };
+    const exported = exportPayload(s);
+    const back = importPayload(JSON.stringify(exported))!;
+    expect(back.rngSeed).toBe(0xFEEDFACE_C0FFEE_1234_5678n);
+    expect(back.deployCounter).toBe(999n);
+  });
+
+  it('legacyDeserialize verwendet RNG_DEFAULT_SEED wenn rngSeed fehlt (Robustheit)', () => {
+    // Wenn ein älterer Save (oder ein manuell gebauter JSON) kein rngSeed hat,
+    // soll der Default greifen statt zu werfen oder undefined zu liefern.
+    const raw = JSON.stringify({
+      version: ENGINE_VERSION,
+      cyclesScaled: '1000',
+      totalEarnedScaled: '1000',
+      clickPowerScaled: '1000',
+      prodRemainder: '0',
+      generators: {},
+      upgrades: {},
+      // rngSeed fehlt bewusst
+      // deployCounter fehlt bewusst
+      shares: '0',
+    });
+    const back = deserialize(raw)!;
+    expect(back.rngSeed).toBeDefined();
+    expect(typeof back.rngSeed).toBe('bigint');
+    expect(back.deployCounter).toBe(0n);
+  });
+});

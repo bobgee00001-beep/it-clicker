@@ -12,6 +12,11 @@ import {
 import { calculateUptime, calculateErrorRate, deploymentQuality, updateObservability } from '../observability';
 import { MAX_DEPLOY_RISK } from '../config';
 import { SCALE } from '../types';
+import { splitmix64Modulo, SPLITMIX_GAMMA } from '../prng';
+
+// RISK_BP_SCALE-Konstante aus release.ts (mod 10000).
+// Hier lokal definiert weil nicht exportiert; sollte mit release.ts übereinstimmen.
+const RISK_BP_SCALE = 10000n;
 
 function setTickets(s: ReturnType<typeof createInitialState>, count: number) {
   const tickets = Array.from({ length: count }, (_, i) => ({
@@ -48,7 +53,8 @@ describe('Stage 5: Release Train + Observability', () => {
   it('finishDeploy mit success: CPS × 1.5 (releaseDeployBonusMultiplier === 1.5)', () => {
     const s = createInitialState(0);
     const started = startDeploy(s);
-    const finished = finishDeploy(started); // ohne rng immer Erfolg
+    // successChance-Override garantiert Erfolg (1 > riskBp).
+    const finished = finishDeploy(started, () => 1);
     expect(finished.releaseStatus).toBe('success');
     expect(finished.releaseDeployBonusMultiplier).toBe(1.5);
     expect(finished.successfulDeploys).toBe(1);
@@ -63,7 +69,7 @@ describe('Stage 5: Release Train + Observability', () => {
     for (const chunk of chunks) {
       after = updateReleaseTrain(after, chunk);
     }
-    // (chunks above)
+    // (chunks above) — successChance-Override garantiert Erfolg.
     expect(after.releaseStatus).toBe('success');
     expect(after.successfulDeploys).toBe(1);
   });
@@ -266,5 +272,89 @@ describe('Stage 5: Release Train + Observability', () => {
       const finished = finishDeploy(started);
       expect(finished.lastDeployAt).toBe(42_000);
     });
+  });
+});
+
+describe('Stage 5: Deterministic Deploy-RNG (v6)', () => {
+  it('low-risk state: counter=0 deterministischer Roll → success (ohne successChance-Override)', () => {
+    // RNG_DEFAULT_SEED + 0*GAMMA → splitmix64 % 10000 = 5304 (gepinnt in prng.test.ts).
+    // Initial-State risk = 0.18 → riskBp = 1800. 5304 ≮ 1800 → success.
+    const s = createInitialState(0);
+    const started = startDeploy(s);
+    expect(started.deployCounter).toBe(1n); // Georg's #1: nur auf erfolgreichem Start
+    const finished = finishDeploy(started); // OHNE Override — reiner RNG-Pfad
+    expect(finished.releaseStatus).toBe('success');
+    expect(finished.successfulDeploys).toBe(1);
+    expect(finished.failedDeploys).toBe(0);
+  });
+
+  it('high-risk state (5 P1-Tickets): counter=1 deterministischer Roll → failed', () => {
+    // Georg's #3 Feinheit: "Test-Fallout ist Feature, nicht Bug."
+    // Mindestens ein Test fürs Gegenteil: hoher Risk + deterministischer Roll → failed.
+    // 5 P1-Tickets: risk = 0.18 + 5*0.04 + 5*0.12 = 0.98 → riskBp = 9800.
+    // Counter=1 → rollBp = 8072 (gepinnt). 8072 < 9800 → failed.
+    const s = createInitialState(0);
+    const with5P1 = {
+      ...s,
+      tickets: Array.from({ length: 5 }, (_, i) => ({
+        id: `p1-${i}`,
+        type: 'p1' as const,
+        title: `SEV1 Outage ${i}`,
+        sla: 45,
+        maxSla: 45,
+        rewardScaled: 100n * SCALE,
+        autoCloseTimer: 0,
+        spawnTime: 0,
+      })),
+      // Drücke Observability/Erfahrung runter damit experienceCredit nicht
+      // kompensiert (initial: errorBudget=100, observabilityScore=82, successfulDeploys=0).
+      observabilityScore: 50, // weniger Credit
+      errorBudget: 30,        // bisschen Budget-Risk on top
+    };
+    expect(canStartDeploy(with5P1)).toBe(true); // 5 ≤ 5, sev1 false
+    const started = startDeploy(with5P1);
+    expect(started.deployCounter).toBe(1n);
+    const finished = finishDeploy(started); // OHNE Override
+    expect(finished.releaseStatus).toBe('failed');
+    expect(finished.failedDeploys).toBe(1);
+    expect(finished.successfulDeploys).toBe(0);
+    expect(finished.rollbackAvailable).toBe(true);
+    expect(finished.activeIncidents).toBe(1);
+    expect(finished.tickets.some((t) => t.title.toLowerCase().includes('deployment'))).toBe(true);
+  });
+
+  it('startDeploy blocked path: deployCounter bleibt UNVERÄNDERT (Georg #1)', () => {
+    // Blockieren via sev1Active (canStartDeploy === false). Counter darf NICHT
+    // hochgezählt werden — sonst würde ein blockierter Versuch den nächsten
+    // gültigen Deploy um 1 versetzen und der Re-Verifier läuft auseinander.
+    const s = { ...createInitialState(0), sev1Active: true };
+    expect(canStartDeploy(s)).toBe(false);
+    const after = startDeploy(s);
+    expect(after.releaseStatus).toBe('idle'); // unverändert, kein 'building'
+    expect(after.deployCounter).toBe(0n);     // NICHT inkrementiert
+    expect(after.deploysStarted).toBe(0);     // legacy counter auch nicht
+  });
+
+  it('aufeinanderfolgende Deploys: deployCounter steigt monoton pro startDeploy', () => {
+    // Georg's #1: counter inkrementiert NUR auf erfolgreichem StartDeploy.
+    // Wir resetten releaseStatus zwischen den Deploys (Test-Helper), um den
+    // Lifecycle (build→test→security→deploy) abzukuerzen — der ist in den
+    // anderen Tests (Final E2E) bereits voll abgedeckt.
+    const results: Array<bigint> = [];
+    let s = createInitialState(0);
+    for (let i = 0; i < 5; i++) {
+      const idle = { ...s, releaseStatus: 'idle' as const };
+      const started = startDeploy(idle);
+      expect(started.deployCounter).toBe(BigInt(i + 1));
+      results.push(started.deployCounter);
+      s = finishDeploy(started);
+    }
+    expect(results).toEqual([1n, 2n, 3n, 4n, 5n]);
+    // Mindestens 2 verschiedene Roll-Werte (über Counter-Wechsel) — beweist dass
+    // der Counter tatsächlich Einfluss auf den Roll hat.
+    const rollForCounter = (c: bigint) =>
+      Number(splitmix64Modulo(s.rngSeed + c * SPLITMIX_GAMMA, RISK_BP_SCALE));
+    const rollSet = new Set([rollForCounter(1n), rollForCounter(2n), rollForCounter(3n)]);
+    expect(rollSet.size).toBeGreaterThanOrEqual(2);
   });
 });

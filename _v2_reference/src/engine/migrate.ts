@@ -1,4 +1,4 @@
-// Migration: v1-Save-Formate (Flat + Meta-Wrap) -> v2-GameState (ENGINE_VERSION = 5).
+// Migration: v1-Save-Formate (Flat + Meta-Wrap) -> v2-GameState (ENGINE_VERSION = 6).
 // Pure functions, keine DOM-Calls, kein localStorage, kein console.log.
 // Logger-Hook: optionaler onIssue-Callback erzeugt EventLog-Einträge.
 
@@ -10,7 +10,7 @@ import {
   type SoundThemeId,
   type ReleaseStatus,
 } from './types';
-import { ENGINE_VERSION, UPGRADES, ACHIEVEMENTS, GENERATORS } from './config';
+import { ENGINE_VERSION, FIRST_NATIVE_VERSION, UPGRADES, ACHIEVEMENTS, GENERATORS, RNG_DEFAULT_SEED } from './config';
 import { createEventLog, type EventLog, type Severity, type EventCategory } from './eventLog';
 import { numberOr, boolOr, stringOr, toNonNegBigInt } from '../lib/fallbacks';
 
@@ -535,12 +535,26 @@ function injectV4ToV5(state: Record<string, unknown>): Record<string, unknown> {
   return next;
 }
 
+/** Injiziert fehlende Felder für Version 5 -> 6 (deterministischer Deploy-RNG). */
+function injectV5ToV6(state: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...state };
+  // Determinismus-Kern (Phase-3 Leaderboard). v5-Saves haben diese Felder
+  // NICHT — wir setzen rngSeed auf den fixen Default (alle Clients starten
+  // mit demselben Seed → Server-Validator in Phase 3 kann den Roll-Verlauf
+  // reproduzieren) und deployCounter auf 0 (Saves vor v6 hatten gar keinen
+  // Counter; ein "alter" Spieler faengt bei Deploy #1 an).
+  if (!('rngSeed' in next)) next.rngSeed = RNG_DEFAULT_SEED;
+  if (!('deployCounter' in next)) next.deployCounter = 0n;
+  return next;
+}
+
 function applyDefaultChain(state: Record<string, unknown>, fromVersion: number): Record<string, unknown> {
   let next = { ...state };
   if (fromVersion < 2) next = injectV1ToV2(next);
   if (fromVersion < 3) next = injectV2ToV3(next);
   if (fromVersion < 4) next = injectV3ToV4(next);
   if (fromVersion < 5) next = injectV4ToV5(next);
+  if (fromVersion < 6) next = injectV5ToV6(next);
   return next;
 }
 
@@ -587,10 +601,18 @@ export function migrateSavePayload(
   const withDefaults = applyDefaultChain(state, fromVersion);
   const migrated = fromVersion !== ENGINE_VERSION;
   // Generator<->Upgrade-Umlenkung NUR für das Legacy-Flat-Format (Vorgänger-
-  // Saves saveVersion 1..4), das Generator-Käufe ins `upgrades`-Feld mischte.
-  // Native Saves (ENGINE_VERSION = 5) haben getrennte generators/upgrades und
-  // dürfen NICHT umgedeutet werden — sonst Datenverlust bei Hybrid-IDs.
-  const result = buildGameState(withDefaults, issues, logger, fromVersion < ENGINE_VERSION);
+  // Saves saveVersion 1..FIRST_NATIVE_VERSION-1 = 1..4), das Generator-Käufe
+  // ins `upgrades`-Feld mischte. Native Saves (>=FIRST_NATIVE_VERSION = 5,
+  // incl. v6) haben getrennte generators/upgrades und dürfen NICHT umgedeutet
+  // werden — sonst Datenverlust bei Hybrid-IDs (server/vm/ssd).
+  //
+  // KRITISCH: Gate haengt an FIRST_NATIVE_VERSION, NICHT an ENGINE_VERSION.
+  // Vor diesem Fix war `fromVersion < ENGINE_VERSION`, was mit ENGINE_VERSION=6
+  // ein natives v5-Save (fromVersion=5) als legacyFlat=true klassifiziert
+  // haette — exakt die Korruption, die PR #10 (#7416f86) gefixt hat.
+  // FIRST_NATIVE_VERSION = 5 bleibt FIX ueber alle kuenftigen Bumps; eine
+  // neue Legacy-Epoche wuerde eine neue Konstante rechtfertigen.
+  const result = buildGameState(withDefaults, issues, logger, fromVersion < FIRST_NATIVE_VERSION);
   return { data: result, migrated, fromVersion };
 }
 
@@ -598,11 +620,12 @@ function buildGameState(
   state: Record<string, unknown>,
   issues: MigrationIssue[],
   externalLogger?: MigrationLogger,
-  // Nur das Legacy-Flat-Format (Vorgänger-Saves saveVersion < ENGINE_VERSION)
-  // lagerte Generator-Käufe im `upgrades`-Feld. Für native Saves ist `upgrades`
-  // kanonisch und darf NICHT umgedeutet werden — sonst gingen legitime Upgrades
-  // mit Generator-Twin-ID (server/vm/ssd) beim Laden verloren (Roundtrip-
-  // Korruption). Default false = sicher (kein Umlenken).
+  // Nur das Legacy-Flat-Format (Vorgänger-Saves saveVersion < FIRST_NATIVE_VERSION
+  // = 1..4) lagerte Generator-Käufe im `upgrades`-Feld. Für native Saves
+  // (>=FIRST_NATIVE_VERSION = 5) ist `upgrades` kanonisch und darf NICHT
+  // umgedeutet werden — sonst gingen legitime Upgrades mit Generator-Twin-ID
+  // (server/vm/ssd) beim Laden verloren (Roundtrip-Korruption). Default false
+  // = sicher (kein Umlenken).
   legacyFlat: boolean = false,
 ): GameState {
   const issueLogger = makeIssueLogger();
@@ -716,6 +739,15 @@ function buildGameState(
     prodRemainder: sanitizeScaled(state, 'prodRemainder', 0n, issues),
     shares: sanitizeScaled(state, 'shares', 0n, issues),
     lastSavedMs: sanitizeNonNegInt(state, 'lastSavedMs', nowMs, issues),
+    // Determinismus-Kern (Phase-3 Leaderboard). Roundtrip-stabil:
+    //   - Wenn das eingehende Save rngSeed/deployCounter hat → übernehmen
+    //     (Spieler behält seine Seed-History + Counter-Position).
+    //   - Wenn nicht (z.B. v5-Save oder partial payload) → Defaults aus
+    //     injectV5ToV6 wurden bereits gesetzt; hier nur sanitisieren.
+    //   - sanitizeScaled akzeptiert bigint und string-kodierte bigints.
+    //   - toNonNegBigInt akzeptiert ebenfalls beide Formen.
+    rngSeed: sanitizeScaled(state, 'rngSeed', RNG_DEFAULT_SEED, issues),
+    deployCounter: toNonNegBigInt(state.deployCounter, 0n),
     version: ENGINE_VERSION,
     // Initiale Snapshot — wird nach der Schluss-Iteration ueberschrieben
     // (siehe return). Hier trotzdem den Getter nutzen, um nicht versehentlich
