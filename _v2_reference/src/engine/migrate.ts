@@ -125,16 +125,19 @@ function sanitizeScaled(state: Record<string, unknown>, key: string, fallback: b
   const converted = toNonNegBigInt(v, fallback);
   if (converted !== fallback && v !== undefined) return converted;
   if (v !== undefined && converted === fallback && String(v) !== String(fallback)) {
-    const issue: MigrationIssue = { message: `invalid scaled value (key=${key})`, field: key, received: v, fallback };
-    issues.push(issue);
-    reportIssueRef(issue);
+    // Nur pushen — die Schluss-Schleife in buildGameState meldet alle
+    // gesammelten Issues am Ende. Doppelreport via reportIssueRef hier
+    // entfernt, weil das Timing (Sanitizer-Returns laufen NACH dem
+    // ursprueglichen issues-Loop) genau dieses Problem verursacht hat.
+    issues.push({ message: `invalid scaled value (key=${key})`, field: key, received: v, fallback });
   }
   return converted;
 }
 
-// Forward declaration used by helpers; real implementation below wraps sanitizers and reports issues.
+// reportIssueRef + _setReportIssue werden nicht mehr aktiv genutzt
+// (Sanitizer melden am Ende ueber die issues-Schleife in buildGameState),
+// bleiben aber fuer Rueckwaertskompatibilitaet / externe Tests erhalten.
 let reportIssueRef: (issue: MigrationIssue) => void = () => {};
-
 function _setReportIssue(report: (issue: MigrationIssue) => void) {
   reportIssueRef = report;
 }
@@ -602,15 +605,31 @@ function buildGameState(
   // Korruption). Default false = sicher (kein Umlenken).
   legacyFlat: boolean = false,
 ): GameState {
-  const { log, eventLog } = makeIssueLogger();
+  const issueLogger = makeIssueLogger();
 
   // Issue-Meldung an beide Logger (interner EventLog + optionaler externer Hook).
+  // Wichtig: NIE `log`/`eventLog` in lokale Variablen destrukturieren — der
+  // interne `let eventLog` wird durch log() mit einem NEUEN Objekt ueber-
+  // schrieben (createEventLogEntry gibt {...log, entries: nextEntries} zurueck).
+  // Eine fruehe Const-Referenz auf das alte Objekt veraltet sofort und sieht
+  // alle spaeteren Meldungen NICHT. Nur ueber den Getter issueLogger.eventLog
+  // lesen, dann sieht man den aktuellen Stand.
   const report = (issue: MigrationIssue) => {
-    log(issue);
+    issueLogger.log(issue);
     externalLogger?.(issue);
   };
   _setReportIssue(report);
+  // Fruehe issues aus extractSourceState (z.B. 'payload is not an object')
+  // sofort melden. Die Sanitizer im Return-Statement sammeln ihre Issues im
+  // selben `issues`-Array und werden am ENDE durchgereicht (s.u.) — so kommen
+  // 'invalid integer', 'invalid boolean', 'invalid tickets array' etc. jetzt
+  // auch im externen Hook UND im internen EventLog an (vorher: stumm
+  // verschluckt, weil die Sanitizer NACH dem issues-Loop liefen).
   for (const issue of issues) report(issue);
+  // Snapshot der bisherigen issues-Laenge, damit die Schluss-Iteration nur die
+  // NEU hinzugekommenen Sanitizer-Issues meldet — sonst Doppelreport fuer
+  // Caller-Issues.
+  const initialIssuesLength = issues.length;
 
   // Legacy: v1 saved generator purchases in `upgrades`. Pull those out first
   // so sanitizeGenerators can merge them with any explicit v1 `generators` field.
@@ -627,7 +646,7 @@ function buildGameState(
   // Einmal sanitizen statt zweimal (sonst würde ein Issue doppelt gemeldet).
   const releaseStageIndexSan = sanitizeNonNegInt(state, 'releaseStageIndex', 0, issues);
 
-  return {
+  const built: GameState = {
     cyclesScaled: sanitizeScaled(state, 'cyclesScaled', 0n, issues),
     totalEarnedScaled: sanitizeScaled(state, 'totalEarnedScaled', 0n, issues),
     workerEarnedScaled: sanitizeScaled(state, 'workerEarnedScaled', 0n, issues),
@@ -698,6 +717,20 @@ function buildGameState(
     shares: sanitizeScaled(state, 'shares', 0n, issues),
     lastSavedMs: sanitizeNonNegInt(state, 'lastSavedMs', nowMs, issues),
     version: ENGINE_VERSION,
-    eventLog: eventLog,
+    // Initiale Snapshot — wird nach der Schluss-Iteration ueberschrieben
+    // (siehe return). Hier trotzdem den Getter nutzen, um nicht versehentlich
+    // eine veraltete Const-Referenz zu setzen.
+    eventLog: issueLogger.eventLog,
   };
+  // Schluss-Iteration: nur die Sanitizer-Issues, die WAHREND des Return-Objekt-
+  // Aufbaus NEU in `issues` gepusht wurden. Damit landen 'invalid integer',
+  // 'invalid boolean', 'invalid tickets array', 'dropped unknown
+  // upgrade/achievement IDs' etc. sowohl im internen eventLog als auch im
+  // externen Hook — vorher gingen sie stillschweigend verloren, weil die
+  // urspruegliche issues-Schleife VOR den Sanitizer-Calls lief.
+  for (let i = initialIssuesLength; i < issues.length; i++) report(issues[i]);
+  // Aktuellen eventLog aus dem Logger lesen (alle report()-Aufrufe mutieren
+  // den internen let eventLog; das eventLog-Feld in `built` wurde aber VOR
+  // diesen Meldungen gesetzt — jetzt ueberschreiben mit dem finalen Stand).
+  return { ...built, eventLog: issueLogger.eventLog };
 }
