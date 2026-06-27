@@ -15,8 +15,8 @@ export function canStartDeploy(s: GameState): boolean {
   return s.releaseStatus === 'idle' && !s.sev1Active && s.tickets.length <= 5;
 }
 
-/** Release Train starten: Status → building. */
-export function startDeploy(s: GameState, _nowMs: number = 0): GameState {
+/** Release Train starten: Status → building. Setzt lastDeployAt, wenn nowMs > 0. */
+export function startDeploy(s: GameState, nowMs: number = 0): GameState {
   if (!canStartDeploy(s)) {
     const reason = s.sev1Active
       ? 'SEV1 aktiv: Change Freeze.'
@@ -30,6 +30,7 @@ export function startDeploy(s: GameState, _nowMs: number = 0): GameState {
   return {
     ...s,
     deploysStarted: s.deploysStarted + 1,
+    lastDeployAt: nowMs > 0 ? nowMs : s.lastDeployAt ?? null,
     releaseStatus: 'building',
     releaseStageIndex: 0,
     releaseStageTimer: stageDurationSeconds(0),
@@ -75,7 +76,7 @@ const ACTIVE_RELEASE_STATUSES: readonly GameState['releaseStatus'][] = ['buildin
  * - Verringert den aktiven Bonus-Timer.
  * - Verringert Stage-Timer; bei Ablauf nächste Stage oder finishDeploy.
  */
-export function updateReleaseTrain(s: GameState, dtMs: number, successChance?: () => number): GameState {
+export function updateReleaseTrain(s: GameState, dtMs: number, successChance?: () => number, nowMs: number = 0): GameState {
   if (dtMs <= 0) return s;
   let state = updateDeployBonusTimer(s, dtMs);
   if (!ACTIVE_RELEASE_STATUSES.includes(state.releaseStatus)) {
@@ -111,8 +112,9 @@ export function updateReleaseTrain(s: GameState, dtMs: number, successChance?: (
   }
 
   if (stageTimer < 1e-9 && stageIndex >= RELEASE_STAGES.length - 1) {
-    // Deploy fertig — Ergebnis bestimmen.
-    state = finishDeploy({ ...state, releaseStageIndex: stageIndex, releaseStageTimer: 0, releaseMessage: message }, successChance);
+    // Deploy fertig — Ergebnis bestimmen. nowMs durchreichen, damit lastDeployAt
+    // und lastReleaseEvidence einen echten Timestamp bekommen.
+    state = finishDeploy({ ...state, releaseStageIndex: stageIndex, releaseStageTimer: 0, releaseMessage: message }, successChance, nowMs);
     return state;
   }
 
@@ -167,16 +169,24 @@ function updateDeployBonusTimer(s: GameState, dtMs: number): GameState {
 /**
  * Deploy abschließen: Erfolg oder Fehler per Zufall gegeben Risiko.
  * @param successChance - Optional rng (0..1); bei undefined IMMER Erfolg (deterministische Tests).
+ * @param nowMs - Optional: Zeitpunkt des Deploy-Abschlusses. Wenn > 0 wird lastDeployAt
+ *                damit gesetzt (sonst Fallback auf s.lastDeployAt). Wirkt sich auf UI-
+ *                Evidence-Texte (lastReleaseEvidence) aus.
  */
-export function finishDeploy(s: GameState, successChance?: () => number): GameState {
+export function finishDeploy(s: GameState, successChance?: () => number, nowMs: number = 0): GameState {
   const risk = calculateRisk(s);
   const roll = successChance ? successChance() : 1; // ohne rng immer Erfolg (deterministische Tests)
   const failed = roll < risk;
+  // nowMs durchreichen: wenn explizit > 0, ist das der echte Abschluss-Zeitpunkt;
+  // sonst Fallback auf den bereits gesetzten lastDeployAt (von startDeploy oder
+  // vorigem finishDeploy). Niemals 0, wenn lastDeployAt schon einen Wert hat.
+  const deployAtMs = nowMs > 0 ? nowMs : s.lastDeployAt ?? 0;
 
   if (failed) {
     const next: GameState = {
       ...s,
       failedDeploys: s.failedDeploys + 1,
+      lastDeployAt: deployAtMs > 0 ? deployAtMs : s.lastDeployAt ?? null,
       releaseStatus: 'failed',
       releaseStageIndex: RELEASE_STAGES.length - 1,
       releaseMessage: 'Deploy fehlgeschlagen: Incident erzeugt, Rollback bereit.',
@@ -188,17 +198,16 @@ export function finishDeploy(s: GameState, successChance?: () => number): GameSt
       observabilityScore: Math.max(25, s.observabilityScore - 18),
       lastDeploymentQuality: 'failed',
       observabilityMessage: 'P1 nach Deploy: Rollback empfohlen.',
-      lastReleaseEvidence: `Failed deploy #${s.deploysStarted} - ${s.lastDeployAt ?? 0}`,
+      lastReleaseEvidence: `Failed deploy #${s.deploysStarted} - ${deployAtMs || (s.lastDeployAt ?? 0)}`,
       eventLog: addEvent(s.eventLog, 'Deploy fehlgeschlagen: P1 eröffnet.', 'critical', 'deploy'),
     };
     return addFailedDeployP1(next);
   }
 
-  const nowMs = s.lastDeployAt ?? 0;
   const finished: GameState = {
     ...s,
     successfulDeploys: s.successfulDeploys + 1,
-    lastDeployAt: nowMs,
+    lastDeployAt: deployAtMs > 0 ? deployAtMs : s.lastDeployAt ?? null,
     releaseStatus: 'success',
     releaseStageIndex: RELEASE_STAGES.length,
     releaseDeployBonusTimer: RELEASE_DEPLOY_BONUS_SECONDS,
@@ -210,7 +219,7 @@ export function finishDeploy(s: GameState, successChance?: () => number): GameSt
     observabilityScore: Math.min(100, s.observabilityScore + 7),
     rollbackAvailable: false,
     lastDeploymentQuality: 'clean',
-    lastReleaseEvidence: `Successful deploy #${s.successfulDeploys + 1} - ${nowMs}`,
+    lastReleaseEvidence: `Successful deploy #${s.successfulDeploys + 1} - ${deployAtMs || (s.lastDeployAt ?? 0)}`,
     observabilityMessage: 'Post-Deploy-Monitoring läuft.',
     releaseMessage: 'Production stabil: +50% CPS für 120 Sekunden.',
     cyclesScaled: s.cyclesScaled + BigInt(Math.trunc(250 * s.multiplier)) * 1000n,

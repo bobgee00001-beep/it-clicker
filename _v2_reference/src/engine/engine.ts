@@ -656,8 +656,9 @@ export function tick(s: GameState, dtMs: number, nowMs?: number): GameState {
   state = checkPagerDuty(state, now);
   state = checkMondayMorning(state, now);
   state = trackMaxCyclesNoUpgrades(state);
-  // Release Train + Observability.
-  state = updateReleaseTrain(state, dtMs);
+  // Release Train + Observability. nowMs an updateReleaseTrain durchreichen, damit
+  // ein während tick() abschließender Deploy echte Timestamps in lastDeployAt bekommt.
+  state = updateReleaseTrain(state, dtMs, undefined, nowMs);
   state = updateObservability(state, dtMs);
   // Hinweis: releaseDeployBonusMultiplier wird allein in release.ts verwaltet
   // (finishDeploy setzt 1.5, updateDeployBonusTimer setzt bei Ablauf auf 1) —
