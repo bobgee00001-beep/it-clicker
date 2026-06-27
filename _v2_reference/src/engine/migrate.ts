@@ -150,6 +150,39 @@ function sanitizeNonNegInt(state: Record<string, unknown>, key: string, fallback
   return fallback;
 }
 
+/**
+ * Sanitizer mit Sentinel-Support.
+ *
+ * Manche Felder haben einen LEGITIMEN Sentinel-Wert (z.B. releaseStageIndex = -1
+ * bedeutet "noch kein Release-Train gestartet"). Ein normaler NonNeg-Sani-
+ * tizer wuerde -1 als invalid ablehnen und auf Fallback (0) zurueckfallen —
+ * dann haengt der Caller an einem Nach-pruef-Hack (`=== 0 && input === -1`),
+ * der fragil ist und trotzdem ein Warning produziert.
+ *
+ * Diese Variante erkennt den Sentinel-Wert vor dem NonNeg-Check und gibt
+ * ihn unveraendert zurueck, OHNE ein Issue zu melden (der Sentinel ist
+ * legitim, kein Korruptions-Symptom).
+ *
+ * @param sentinel Optionaler Sentinel-Wert (z.B. -1 fuer "noch nicht aktiv").
+ *                 Wenn `state[key] === sentinel`, wird der Sentinel-Wert
+ *                 unveraendert zurueckgegeben und KEIN Issue gemeldet.
+ */
+function sanitizeIntWithSentinel(
+  state: Record<string, unknown>,
+  key: string,
+  fallback: number,
+  sentinel: number | undefined,
+  issues: MigrationIssue[],
+): number {
+  const v = state[key];
+  // Sentinel zuerst pruefen — legitim, kein Issue.
+  if (sentinel !== undefined && v === sentinel) return sentinel;
+  // Sonst normaler NonNeg-Integer-Pfad.
+  if (typeof v === 'number' && Number.isInteger(v) && v >= 0) return v;
+  if (v !== undefined && v !== null) issues.push({ message: 'invalid integer', field: key, received: v, fallback });
+  return fallback;
+}
+
 function sanitizeNonNegFloat(state: Record<string, unknown>, key: string, fallback: number, issues: MigrationIssue[]): number {
   const v = state[key];
   if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v;
@@ -667,8 +700,12 @@ function buildGameState(
   const clicks = toNonNegBigInt(clicksRaw, 0n);
 
   const nowMs = Date.now();
-  // Einmal sanitizen statt zweimal (sonst würde ein Issue doppelt gemeldet).
-  const releaseStageIndexSan = sanitizeNonNegInt(state, 'releaseStageIndex', 0, issues);
+  // releaseStageIndex hat einen legitimen Sentinel-Wert: -1 bedeutet "noch
+  // kein Release-Train gestartet" (siehe types.ts + release.ts canStartDeploy).
+  // sanitizeIntWithSentinel erkennt -1 vor dem NonNeg-Check und gibt es un-
+  // veraendert zurueck, OHNE ein Issue zu melden — saubere Loesung statt
+  // dem frueheren `sanitizeNonNegInt + Nach-pruef-Hack auf input === -1`.
+  const RELEASE_STAGE_INDEX_SENTINEL = -1 as const;
 
   const built: GameState = {
     cyclesScaled: sanitizeScaled(state, 'cyclesScaled', 0n, issues),
@@ -710,7 +747,7 @@ function buildGameState(
     failedDeploys: sanitizeNonNegInt(state, 'failedDeploys', 0, issues),
     lastDeployAt: sanitizeNullableNumber(state, 'lastDeployAt', null, issues),
     releaseStatus: sanitizeReleaseStatus(state, 'releaseStatus', 'idle', issues),
-    releaseStageIndex: releaseStageIndexSan === 0 && state.releaseStageIndex === -1 ? -1 : releaseStageIndexSan,
+    releaseStageIndex: sanitizeIntWithSentinel(state, 'releaseStageIndex', 0, RELEASE_STAGE_INDEX_SENTINEL, issues),
     releaseStageTimer: sanitizeNonNegFloat(state, 'releaseStageTimer', 0, issues),
     releaseDeployBonusTimer: sanitizeNonNegFloat(state, 'releaseDeployBonusTimer', 0, issues),
     releaseDeployBonusMultiplier: sanitizeNonNegFloat(state, 'releaseDeployBonusMultiplier', 1, issues),

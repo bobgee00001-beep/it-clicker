@@ -206,4 +206,52 @@ describe('migrateSavePayload', () => {
     expect(r.data.eventLog.entries.length).toBeGreaterThanOrEqual(1);
     expect(r.data.eventLog.entries[0].message).toContain('payload is not an object');
   });
+
+  describe('Sentinel-Erkennung (releaseStageIndex = -1 ist legitim)', () => {
+    // Georg's Hinweis (2026-06-26): legitime Sentinel-Werte gehoeren VOR
+    // dem NonNeg-Check im Sanitizer erkannt, nicht durch einen Nach-pruef-
+    // Hack im Caller wieder hergestellt. Sonst: fragiler Code, der trotzdem
+    // ein Warning produziert (Sanitizer lehnt -1 ab, Caller restauriert).
+    //
+    // releaseStageIndex = -1  bedeutet "noch kein Release-Train gestartet"
+    // (siehe types.ts + release.ts canStartDeploy). Der Wert ist ein
+    // explizit gesetzter Initialwert und KEIN Korruptions-Symptom.
+
+    it('releaseStageIndex = -1 bleibt erhalten OHNE Issue-Meldung', () => {
+      const r = migrateSavePayload({ version: 6, releaseStageIndex: -1 });
+      expect(r.data.releaseStageIndex).toBe(-1);
+      // Kein 'invalid integer' Issue fuer den legitimen Sentinel.
+      const integerIssues = r.data.eventLog.entries.filter((e) =>
+        e.message.includes('releaseStageIndex'),
+      );
+      expect(integerIssues).toHaveLength(0);
+    });
+
+    it('releaseStageIndex = 5 (normaler Wert): durchgelassen ohne Issue', () => {
+      const r = migrateSavePayload({ version: 6, releaseStageIndex: 5 });
+      expect(r.data.releaseStageIndex).toBe(5);
+      expect(r.data.eventLog.entries.filter((e) => e.message.includes('releaseStageIndex')))
+        .toHaveLength(0);
+    });
+
+    it('releaseStageIndex = "huge" (invalid string): Fallback 0 + Issue', () => {
+      const r = migrateSavePayload({ version: 6, releaseStageIndex: 'huge' });
+      expect(r.data.releaseStageIndex).toBe(0);
+      const integerIssues = r.data.eventLog.entries.filter((e) =>
+        e.message.includes('releaseStageIndex') && e.message.includes('invalid integer'),
+      );
+      expect(integerIssues.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('releaseStageIndex fehlt: Fallback 0 + KEIN Issue', () => {
+      // Fehlendes Feld ist kein Korruptions-Symptom (kein undefined-Wert
+      // in der Migration-Pipeline), also kein Issue.
+      const r = migrateSavePayload({ version: 6 });
+      expect(r.data.releaseStageIndex).toBe(0);
+      const integerIssues = r.data.eventLog.entries.filter((e) =>
+        e.message.includes('releaseStageIndex'),
+      );
+      expect(integerIssues).toHaveLength(0);
+    });
+  });
 });
