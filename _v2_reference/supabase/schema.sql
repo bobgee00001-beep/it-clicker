@@ -58,6 +58,11 @@ create table if not exists public.saves (
   constraint saves_payload_size check (pg_column_size(payload) <= 262144)
 );
 alter table public.saves enable row level security;
+-- WICHTIG: per Migration (nicht Dashboard) erstellte Tabellen bekommen KEINE
+-- automatischen Grants. Ohne das gibt PostgREST 403 für die authenticated-Rolle
+-- (RLS sitzt drauf, aber die Rolle darf die Tabelle gar nicht erst ansprechen).
+-- RLS bleibt die Datengrenze; der Grant erlaubt nur den Zugriffsversuch.
+grant select, insert, update, delete on table public.saves to authenticated;
 
 drop policy if exists saves_select_own on public.saves;
 create policy saves_select_own on public.saves
