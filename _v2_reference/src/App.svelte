@@ -56,6 +56,7 @@
   import ThemeToggle from './ui/ThemeToggle.svelte';
   import SaveControls from './ui/SaveControls.svelte';
   import OfflineToast from './ui/OfflineToast.svelte';
+  import LoginPanel from './ui/LoginPanel.svelte';
   import { workerCpsScaled, workerClickRatePerSec } from './engine/workers';
   import { deploymentQuality, calculateUptime, calculateErrorRate } from './engine/observability';
   import { calculateRisk, canStartDeploy, canRollback } from './engine/release';
@@ -412,6 +413,14 @@
           onmute={toggleMute}
           data-testid="audio-panel-component"
         />
+      </section>
+
+      <section class="pane" data-testid="account-panel">
+        <p class="ph">
+          <span class="k">$</span> ssh login
+          <span class="dim">— cloud-save</span>
+        </p>
+        <LoginPanel />
       </section>
 
       <section class="pane" data-testid="save-controls">

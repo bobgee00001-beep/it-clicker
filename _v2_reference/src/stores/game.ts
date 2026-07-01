@@ -14,6 +14,7 @@ import { startDeploy as engStartDeploy, performRollback as engRollback } from '.
 import { serialize, deserialize, exportPayload, importPayload, clearSave, clearCorruptSave } from '../engine/save';
 import { applyOfflineEarnings } from '../engine/offline';
 import { TICK_MS, SHOP_TAB_IDS } from '../engine/config';
+import { attachCloudSync, type CloudSync } from './cloudSave';
 
 const SAVE_KEY = 'it-clicker-v2-save';
 const SAVE_VERSION_SUFFIX = 'v5';
@@ -64,10 +65,17 @@ function readSaveFromStorage(): GameState | null {
   }, null);
 }
 
-function writeSaveToStorage(s: GameState): void {
+// Cloud-Sync wird in init() verdrahtet (null = kein Login/Supabase -> reiner Lokal-Modus).
+let cloudSync: CloudSync | null = null;
+
+function writeSaveToStorage(s: GameState, notifyCloud = true): void {
   withLocalStorage(() => {
     localStorage.setItem(FULL_KEY, serialize({ ...s, lastSavedMs: Date.now() }));
   }, undefined);
+  // Jeder lokale Save plant zusätzlich einen (debounced) Cloud-Upload — greift nur,
+  // wenn der Spieler eingeloggt/freigeschaltet ist, sonst no-op. Beim Adoptieren
+  // eines Cloud-Saves wird notifyCloud=false gesetzt (kein Re-Upload, kein Race).
+  if (notifyCloud) cloudSync?.notifySaved();
 }
 
 function createGameStore(): GameStore {
@@ -127,6 +135,21 @@ function createGameStore(): GameStore {
         state = engTick(state, dt, now);
         set(state);
       }, TICK_MS);
+
+      // Cloud-Sync verdrahten: bei 'player'-Login reconcilen (pull/merge/adopt
+      // oder push), danach hält jeder Save die Cloud aktuell.
+      cloudSync = attachCloudSync({
+        getState: () => state,
+        adopt: (s) => {
+          commit(s);
+          writeSaveToStorage(s, false); // kein Cloud-Re-Upload des grade adoptierten Saves
+        },
+      });
+
+      // Periodischer Autosave (lokal + Cloud-Push). Vorher wurde nur bei
+      // beforeunload geschrieben -> die Cloud hätte während des Spielens nie
+      // etwas gesehen. 20s ist genug für ein Idle-Game.
+      setInterval(() => writeSaveToStorage(state), 20000);
     },
 
     tick(deltaMs: number, nowMs?: number) {
